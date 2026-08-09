@@ -26,11 +26,18 @@ import UploadFileRounded from "@mui/icons-material/UploadFileRounded";
 import AutoAwesomeRounded from "@mui/icons-material/AutoAwesomeRounded";
 import PublishRounded from "@mui/icons-material/PublishRounded";
 import GridOnRounded from "@mui/icons-material/GridOnRounded";
+import CheckCircleRounded from "@mui/icons-material/CheckCircleRounded";
+import EditLocationAltRounded from "@mui/icons-material/EditLocationAltRounded";
+import EventSeatRounded from "@mui/icons-material/EventSeatRounded";
+import ArrowForwardRounded from "@mui/icons-material/ArrowForwardRounded";
+import { useNavigate } from "react-router-dom";
 import { api, postJSON } from "../api";
+import { PageHeader } from "../components/AdminUI";
 import type { Building, Floor, FloorMap } from "../types";
 
 type DialogName = "building" | "floor" | "upload" | "grid" | null;
 export function MapsPage() {
+  const navigate = useNavigate();
   const [buildings, setBuildings] = useState<Building[]>([]),
     [floors, setFloors] = useState<Floor[]>([]),
     [maps, setMaps] = useState<FloorMap[]>([]),
@@ -68,44 +75,38 @@ export function MapsPage() {
   };
   return (
     <Box sx={{ p: { xs: 2, md: 3 }, maxWidth: 1400, mx: "auto" }}>
-      <Stack
-        direction={{ xs: "column", md: "row" }}
-        justifyContent="space-between"
-        spacing={2}
-        mb={3}
-      >
-        <Box>
-          <Typography variant="h5">도면 · 좌석</Typography>
-          <Typography color="text.secondary">
-            도면을 올리고 AI 후보를 확인한 뒤 게시합니다.
-          </Typography>
-        </Box>
-        <Stack direction="row" spacing={1} flexWrap="wrap">
-          <Button
-            variant="outlined"
-            startIcon={<AddBusinessRounded />}
-            onClick={() => setDialog("building")}
-          >
-            사업장
-          </Button>
-          <Button
-            variant="outlined"
-            startIcon={<LayersRounded />}
-            onClick={() => setDialog("floor")}
-            disabled={!buildings.length}
-          >
-            층
-          </Button>
-          <Button
-            variant="contained"
-            startIcon={<UploadFileRounded />}
-            onClick={() => setDialog("upload")}
-            disabled={!floors.length}
-          >
-            도면 업로드
-          </Button>
-        </Stack>
-      </Stack>
+      <PageHeader
+        eyebrow="OFFICE DIGITAL TWIN"
+        title="도면 · 좌석"
+        description="사업장 구성부터 AI 분석, 좌석 보정, 게시까지 한 흐름으로 관리합니다."
+        actions={
+          <Stack direction="row" spacing={1} flexWrap="wrap">
+            <Button
+              variant="outlined"
+              startIcon={<AddBusinessRounded />}
+              onClick={() => setDialog("building")}
+            >
+              사업장
+            </Button>
+            <Button
+              variant="outlined"
+              startIcon={<LayersRounded />}
+              onClick={() => setDialog("floor")}
+              disabled={!buildings.length}
+            >
+              층
+            </Button>
+            <Button
+              variant="contained"
+              startIcon={<UploadFileRounded />}
+              onClick={() => setDialog("upload")}
+              disabled={!floors.length}
+            >
+              도면 업로드
+            </Button>
+          </Stack>
+        }
+      />
       {message && (
         <Alert severity="success" onClose={() => setMessage("")} sx={{ mb: 2 }}>
           {message}
@@ -116,6 +117,63 @@ export function MapsPage() {
           {error}
         </Alert>
       )}
+      <Paper sx={{ p: 2, mb: 2.5 }}>
+        <Stack
+          direction={{ xs: "column", md: "row" }}
+          divider={
+            <ArrowForwardRounded
+              sx={{ color: "text.disabled", alignSelf: "center" }}
+            />
+          }
+          spacing={1}
+        >
+          {[
+            {
+              label: "1. 사업장",
+              done: buildings.length > 0,
+              detail: `${buildings.length}개`,
+            },
+            {
+              label: "2. 층",
+              done: floors.length > 0,
+              detail: `${floors.length}개`,
+            },
+            {
+              label: "3. 도면",
+              done: maps.length > 0,
+              detail: `${maps.length}개 버전`,
+            },
+            {
+              label: "4. AI 분석",
+              done: maps.some((map) => map.status !== "uploaded"),
+              detail: `${maps.reduce((sum, map) => sum + (map.seatCount ?? 0), 0)}석`,
+            },
+            {
+              label: "5. 게시",
+              done: maps.some((map) => map.active),
+              detail: maps.some((map) => map.active) ? "서비스 중" : "대기",
+            },
+          ].map((step) => (
+            <Stack
+              key={step.label}
+              direction="row"
+              alignItems="center"
+              spacing={1}
+              sx={{ flex: 1, minWidth: 0, p: 1 }}
+            >
+              <CheckCircleRounded color={step.done ? "success" : "disabled"} />
+              <Box minWidth={0}>
+                <Typography variant="body2" fontWeight={750}>
+                  {step.label}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {step.detail}
+                </Typography>
+              </Box>
+            </Stack>
+          ))}
+        </Stack>
+      </Paper>
       {maps.length === 0 ? (
         <Paper
           sx={{
@@ -179,11 +237,39 @@ export function MapsPage() {
                               ? "warning"
                               : "default"
                       }
-                      label={m.active ? "게시 중" : m.status}
+                      label={
+                        m.active
+                          ? "게시 중"
+                          : m.status === "uploaded"
+                            ? "분석 전"
+                            : m.status === "review"
+                              ? "검토 필요"
+                              : m.status === "failed"
+                                ? "분석 실패"
+                                : m.status
+                      }
                     />
                   </Stack>
+                  <Stack direction="row" spacing={2.5} sx={{ mt: 2 }}>
+                    <Stack direction="row" spacing={0.7} alignItems="center">
+                      <EventSeatRounded fontSize="small" color="action" />
+                      <Typography variant="body2">
+                        <strong>{m.seatCount ?? 0}</strong>석
+                      </Typography>
+                    </Stack>
+                    <Typography
+                      variant="body2"
+                      color={
+                        (m.reviewCount ?? 0) > 0
+                          ? "warning.main"
+                          : "text.secondary"
+                      }
+                    >
+                      검토 {m.reviewCount ?? 0}건
+                    </Typography>
+                  </Stack>
                 </CardContent>
-                <CardActions sx={{ px: 2, pb: 2 }}>
+                <CardActions sx={{ px: 2, pb: 2, flexWrap: "wrap" }}>
                   <Button
                     size="small"
                     startIcon={<AutoAwesomeRounded />}
@@ -206,6 +292,13 @@ export function MapsPage() {
                     }}
                   >
                     좌석 일괄
+                  </Button>
+                  <Button
+                    size="small"
+                    startIcon={<EditLocationAltRounded />}
+                    onClick={() => navigate(`/?map=${m.id}&edit=1`)}
+                  >
+                    배치 편집
                   </Button>
                   {!m.active && (
                     <Button
@@ -507,8 +600,8 @@ function GridDialog({
       <DialogContent>
         <Stack spacing={2} mt={1}>
           <Alert severity="info">
-            도면 좌측 상단 기준으로 생성됩니다. 생성 후 좌석맵 편집 API로 비율
-            좌표를 조정할 수 있습니다.
+            도면 좌측 상단 기준으로 생성됩니다. 생성 후 좌석맵의 배치 편집에서
+            여러 좌석을 선택하고 바로 이동할 수 있습니다.
           </Alert>
           <TextField
             label="좌석 번호 접두어"

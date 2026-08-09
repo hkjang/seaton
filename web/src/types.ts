@@ -52,6 +52,8 @@ export interface FloorMap {
   createdAt: string;
   floorName: string;
   buildingName: string;
+  seatCount?: number;
+  reviewCount?: number;
   contentUrl: string;
 }
 export interface Seat {

@@ -20,6 +20,8 @@
 - PNG/JPG/PDF 도면 버전 관리, 오프라인 CV 좌석 후보 분석, 비율 좌표 SVG 편집 기반
 - 직원 CSV/XLSX 가져오기, Drag & Drop 배정, 좌석 변경 이력
 - 미배정·퇴직자 점유·조직 영역 불일치·저신뢰 좌석 자동 탐지
+- 예외 중심 관리자 작업 큐와 즉시 조치, 운영 준비도 및 연동 상태 대시보드
+- 좌석 직접 이동, Shift 다중 선택, 스냅·정렬·회전·Undo/Redo 배치 편집
 - Keycloak OIDC Discovery + Authorization Code/PKCE + nonce 검증
 - Keycloak 그룹 기반 RBAC와 SSO 사용자 자동 생성
 - 설치별 암호화 키, 개인별 API 키 생성·회전·폐기·범위 제어

@@ -1,10 +1,12 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type DragEvent,
   type FormEvent,
   type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 import {
   Alert,
@@ -39,7 +41,15 @@ import ApartmentRounded from "@mui/icons-material/ApartmentRounded";
 import AddRounded from "@mui/icons-material/AddRounded";
 import EditRounded from "@mui/icons-material/EditRounded";
 import DeleteOutlineRounded from "@mui/icons-material/DeleteOutlineRounded";
-import { useNavigate } from "react-router-dom";
+import OpenWithRounded from "@mui/icons-material/OpenWithRounded";
+import GridOnRounded from "@mui/icons-material/GridOnRounded";
+import UndoRounded from "@mui/icons-material/UndoRounded";
+import RedoRounded from "@mui/icons-material/RedoRounded";
+import DoneRounded from "@mui/icons-material/DoneRounded";
+import VerticalAlignTopRounded from "@mui/icons-material/VerticalAlignTopRounded";
+import AlignHorizontalLeftRounded from "@mui/icons-material/AlignHorizontalLeftRounded";
+import RotateRightRounded from "@mui/icons-material/RotateRightRounded";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, patchJSON, postJSON } from "../api";
 import { useAuth } from "../auth";
 import type { Building, Employee, Floor, FloorMap, Seat } from "../types";
@@ -52,9 +62,26 @@ const seatColor = (seat: Seat) =>
       : seat.type === "shared"
         ? "#3478C8"
         : "#FFFFFF";
+
+type SeatPosition = Pick<Seat, "id" | "x" | "y" | "rotation">;
+type MoveOperation = { before: SeatPosition[]; after: SeatPosition[] };
+type ActiveDrag = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  width: number;
+  height: number;
+  before: SeatPosition[];
+  after: SeatPosition[];
+};
+
+const clamp = (value: number, maximum: number) =>
+  Math.max(0, Math.min(maximum, value));
+
 export function SeatMapPage() {
   const { user } = useAuth(),
-    navigate = useNavigate();
+    navigate = useNavigate(),
+    [searchParams] = useSearchParams();
   const manager =
     user?.role === "seat_manager" || user?.role === "system_admin";
   const [buildings, setBuildings] = useState<Building[]>([]),
@@ -71,6 +98,16 @@ export function SeatMapPage() {
     [zoom, setZoom] = useState(1),
     [error, setError] = useState(""),
     [editor, setEditor] = useState<Partial<Seat> | null>(null);
+  const [editMode, setEditMode] = useState(
+      Boolean(manager && searchParams.get("edit") === "1"),
+    ),
+    [snapEnabled, setSnapEnabled] = useState(true),
+    [selectedIds, setSelectedIds] = useState<Set<string>>(new Set()),
+    [undoStack, setUndoStack] = useState<MoveOperation[]>([]),
+    [redoStack, setRedoStack] = useState<MoveOperation[]>([]),
+    [moving, setMoving] = useState(false);
+  const dragRef = useRef<ActiveDrag | null>(null);
+  const lastSearchRef = useRef("");
   const loadBase = async () => {
     setLoading(true);
     try {
@@ -82,12 +119,23 @@ export function SeatMapPage() {
       setBuildings(b.items);
       setFloors(f.items);
       setMaps(m.items);
-      const bid = buildingId || b.items[0]?.id || "";
+      const requestedMap = m.items.find(
+        (item) => item.id === searchParams.get("map"),
+      );
+      const requestedFloor = f.items.find(
+        (item) => item.id === requestedMap?.floorId,
+      );
+      const bid =
+        requestedFloor?.buildingId || buildingId || b.items[0]?.id || "";
       setBuildingId(bid);
       const fid =
-        floorId || f.items.find((x) => x.buildingId === bid)?.id || "";
+        requestedMap?.floorId ||
+        floorId ||
+        f.items.find((x) => x.buildingId === bid)?.id ||
+        "";
       setFloorId(fid);
       const mid =
+        requestedMap?.id ||
         m.items.find((x) => x.floorId === fid && x.active)?.id ||
         m.items.find((x) => x.floorId === fid)?.id ||
         "";
@@ -132,6 +180,9 @@ export function SeatMapPage() {
   const chooseMap = async (id: string) => {
     setMapId(id);
     setSelected(null);
+    setSelectedIds(new Set());
+    setUndoStack([]);
+    setRedoStack([]);
     if (!id) {
       setSeats([]);
       return;
@@ -145,15 +196,14 @@ export function SeatMapPage() {
       setError(e instanceof Error ? e.message : "좌석을 불러오지 못했습니다");
     }
   };
-  const search = async (e?: FormEvent) => {
-    e?.preventDefault();
-    if (!query.trim()) {
+  const runSearch = async (term: string) => {
+    if (!term.trim()) {
       setEmployees([]);
       return;
     }
     try {
       const data = await api<{ items: Employee[] }>(
-        `/api/v1/employees?q=${encodeURIComponent(query)}&limit=30`,
+        `/api/v1/employees?q=${encodeURIComponent(term)}&limit=30`,
       );
       setEmployees(data.items);
       const first = data.items.find((x) => x.seatId);
@@ -165,6 +215,18 @@ export function SeatMapPage() {
       setError(e instanceof Error ? e.message : "검색하지 못했습니다");
     }
   };
+  const search = (event?: FormEvent) => {
+    event?.preventDefault();
+    void runSearch(query);
+  };
+  useEffect(() => {
+    const term = searchParams.get("q")?.trim();
+    const key = `${mapId}:${term}`;
+    if (!term || !mapId || key === lastSearchRef.current) return;
+    lastSearchRef.current = key;
+    setQuery(term);
+    void runSearch(term);
+  }, [mapId, searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
   const drop = async (event: DragEvent, seat: Seat) => {
     event.preventDefault();
     if (!manager) return;
@@ -197,7 +259,7 @@ export function SeatMapPage() {
       rotation: 0,
     });
   const mapDoubleClick = (event: ReactMouseEvent<SVGSVGElement>) => {
-    if (!manager) return;
+    if (!manager || !editMode) return;
     const bounds = event.currentTarget.getBoundingClientRect();
     openNewSeat(
       (event.clientX - bounds.left) / bounds.width,
@@ -236,6 +298,204 @@ export function SeatMapPage() {
       setError(e instanceof Error ? e.message : "좌석을 삭제하지 못했습니다");
     }
   };
+  const updateLocalPositions = (positions: SeatPosition[]) => {
+    const byID = new Map(positions.map((position) => [position.id, position]));
+    setSeats((current) =>
+      current.map((seat) => {
+        const position = byID.get(seat.id);
+        return position ? { ...seat, ...position } : seat;
+      }),
+    );
+    setSelected((current) => {
+      if (!current) return current;
+      const position = byID.get(current.id);
+      return position ? { ...current, ...position } : current;
+    });
+  };
+  const persistPositions = async (positions: SeatPosition[]) =>
+    patchJSON<{ updated: number }>("/api/v1/seats/bulk", {
+      updates: positions,
+    });
+  const commitOperation = async (operation: MoveOperation) => {
+    if (
+      operation.before.every((position, index) => {
+        const after = operation.after[index];
+        return (
+          after &&
+          position.x === after.x &&
+          position.y === after.y &&
+          position.rotation === after.rotation
+        );
+      })
+    )
+      return;
+    setMoving(true);
+    try {
+      await persistPositions(operation.after);
+      setUndoStack((current) => [...current.slice(-39), operation]);
+      setRedoStack([]);
+    } catch (e) {
+      updateLocalPositions(operation.before);
+      setError(
+        e instanceof Error ? e.message : "좌석 위치를 저장하지 못했습니다",
+      );
+    } finally {
+      setMoving(false);
+    }
+  };
+  const beginSeatMove = (event: ReactPointerEvent<SVGGElement>, seat: Seat) => {
+    if (!manager || !editMode || event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setSelected(seat);
+    if (event.shiftKey) {
+      setSelectedIds((current) => {
+        const next = new Set(current);
+        if (next.has(seat.id)) next.delete(seat.id);
+        else next.add(seat.id);
+        return next;
+      });
+      return;
+    }
+    const ids = selectedIds.has(seat.id)
+      ? selectedIds
+      : new Set<string>([seat.id]);
+    setSelectedIds(new Set(ids));
+    const before = seats
+      .filter((item) => ids.has(item.id))
+      .map(({ id, x, y, rotation }) => ({ id, x, y, rotation }));
+    const svg = event.currentTarget.ownerSVGElement;
+    if (!svg) return;
+    const bounds = svg.getBoundingClientRect();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      width: bounds.width,
+      height: bounds.height,
+      before,
+      after: before,
+    };
+  };
+  const moveSeats = (event: ReactPointerEvent<SVGSVGElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const dx = (event.clientX - drag.startX) / drag.width;
+    const dy = (event.clientY - drag.startY) / drag.height;
+    const step = snapEnabled ? 0.005 : 0.001;
+    const after = drag.before.map((position) => {
+      const seat = seats.find((item) => item.id === position.id);
+      const x = clamp(
+        Math.round((position.x + dx) / step) * step,
+        1 - (seat?.width ?? 0),
+      );
+      const y = clamp(
+        Math.round((position.y + dy) / step) * step,
+        1 - (seat?.height ?? 0),
+      );
+      return { ...position, x, y };
+    });
+    drag.after = after;
+    updateLocalPositions(after);
+  };
+  const finishSeatMove = (event: ReactPointerEvent<SVGSVGElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    dragRef.current = null;
+    void commitOperation({ before: drag.before, after: drag.after });
+  };
+  const applyTransform = (
+    kind: "left" | "top" | "rotate" | "nudge",
+    dx = 0,
+    dy = 0,
+  ) => {
+    const chosen = seats.filter((seat) => selectedIds.has(seat.id));
+    if (!chosen.length) return;
+    const before = chosen.map(({ id, x, y, rotation }) => ({
+      id,
+      x,
+      y,
+      rotation,
+    }));
+    const left = Math.min(...chosen.map((seat) => seat.x));
+    const top = Math.min(...chosen.map((seat) => seat.y));
+    const after = chosen.map((seat) => ({
+      id: seat.id,
+      x: kind === "left" ? left : clamp(seat.x + dx, 1 - seat.width),
+      y: kind === "top" ? top : clamp(seat.y + dy, 1 - seat.height),
+      rotation: kind === "rotate" ? (seat.rotation + 90) % 360 : seat.rotation,
+    }));
+    updateLocalPositions(after);
+    void commitOperation({ before, after });
+  };
+  const undo = async () => {
+    const operation = undoStack.at(-1);
+    if (!operation || moving) return;
+    setMoving(true);
+    updateLocalPositions(operation.before);
+    try {
+      await persistPositions(operation.before);
+      setUndoStack((current) => current.slice(0, -1));
+      setRedoStack((current) => [...current, operation]);
+    } catch (e) {
+      updateLocalPositions(operation.after);
+      setError(
+        e instanceof Error ? e.message : "실행 취소를 저장하지 못했습니다",
+      );
+    } finally {
+      setMoving(false);
+    }
+  };
+  const redo = async () => {
+    const operation = redoStack.at(-1);
+    if (!operation || moving) return;
+    setMoving(true);
+    updateLocalPositions(operation.after);
+    try {
+      await persistPositions(operation.after);
+      setRedoStack((current) => current.slice(0, -1));
+      setUndoStack((current) => [...current, operation]);
+    } catch (e) {
+      updateLocalPositions(operation.before);
+      setError(
+        e instanceof Error ? e.message : "다시 실행을 저장하지 못했습니다",
+      );
+    } finally {
+      setMoving(false);
+    }
+  };
+  useEffect(() => {
+    if (!editMode) return;
+    const keyboard = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement;
+      if (["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        if (event.shiftKey) void redo();
+        else void undo();
+        return;
+      }
+      if (event.key === "Escape") {
+        setSelectedIds(new Set());
+        setSelected(null);
+        return;
+      }
+      const distance = event.shiftKey ? 0.02 : 0.005;
+      const delta: Record<string, [number, number]> = {
+        ArrowLeft: [-distance, 0],
+        ArrowRight: [distance, 0],
+        ArrowUp: [0, -distance],
+        ArrowDown: [0, distance],
+      };
+      if (delta[event.key]) {
+        event.preventDefault();
+        applyTransform("nudge", ...delta[event.key]);
+      }
+    };
+    window.addEventListener("keydown", keyboard);
+    return () => window.removeEventListener("keydown", keyboard);
+  });
   const selectedEmployee = selected?.employeeId
     ? employees.find((e) => e.id === selected.employeeId)
     : undefined;
@@ -277,13 +537,27 @@ export function SeatMapPage() {
         </Box>
         <Box sx={{ flex: 1 }} />
         {manager && currentMap && (
-          <Button
-            variant="outlined"
-            startIcon={<AddRounded />}
-            onClick={() => openNewSeat()}
-          >
-            좌석 추가
-          </Button>
+          <Stack direction="row" spacing={1}>
+            {editMode && (
+              <Button
+                variant="outlined"
+                startIcon={<AddRounded />}
+                onClick={() => openNewSeat()}
+              >
+                좌석 추가
+              </Button>
+            )}
+            <Button
+              variant={editMode ? "contained" : "outlined"}
+              startIcon={editMode ? <DoneRounded /> : <OpenWithRounded />}
+              onClick={() => {
+                setEditMode((value) => !value);
+                setSelectedIds(new Set());
+              }}
+            >
+              {editMode ? "편집 완료" : "배치 편집"}
+            </Button>
+          </Stack>
         )}
         <Stack direction="row" spacing={1} sx={{ overflowX: "auto" }}>
           <FormControl sx={{ minWidth: 145 }}>
@@ -490,6 +764,67 @@ export function SeatMapPage() {
               bgcolor: "#E9EFF2",
             }}
           >
+            {editMode && (
+              <Box
+                sx={{
+                  position: "absolute",
+                  top: 12,
+                  left: "50%",
+                  transform: "translateX(-50%)",
+                  zIndex: 3,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 0.5,
+                  p: 0.5,
+                  bgcolor: "rgba(7,26,43,.92)",
+                  color: "white",
+                  borderRadius: 2,
+                  boxShadow: 3,
+                }}
+              >
+                <Chip
+                  size="small"
+                  icon={<GridOnRounded />}
+                  label={snapEnabled ? "5px 스냅" : "자유 이동"}
+                  onClick={() => setSnapEnabled((value) => !value)}
+                  sx={{ bgcolor: "rgba(255,255,255,.12)", color: "white" }}
+                />
+                <Tooltip title="실행 취소 · Ctrl/⌘ Z">
+                  <span>
+                    <IconButton
+                      size="small"
+                      disabled={!undoStack.length || moving}
+                      onClick={() => void undo()}
+                      sx={{ color: "white" }}
+                    >
+                      <UndoRounded />
+                    </IconButton>
+                  </span>
+                </Tooltip>
+                <Tooltip title="다시 실행 · Ctrl/⌘ Shift Z">
+                  <span>
+                    <IconButton
+                      size="small"
+                      disabled={!redoStack.length || moving}
+                      onClick={() => void redo()}
+                      sx={{ color: "white" }}
+                    >
+                      <RedoRounded />
+                    </IconButton>
+                  </span>
+                </Tooltip>
+                <Typography
+                  variant="caption"
+                  sx={{ px: 0.7, whiteSpace: "nowrap" }}
+                >
+                  {moving
+                    ? "저장 중…"
+                    : selectedIds.size
+                      ? `${selectedIds.size}개 선택`
+                      : "Shift로 다중 선택"}
+                </Typography>
+              </Box>
+            )}
             <Box
               sx={{
                 position: "absolute",
@@ -566,6 +901,15 @@ export function SeatMapPage() {
                   aria-label={`${currentMap.floorName} 좌석 배치도`}
                   viewBox="0 0 1000 700"
                   onDoubleClick={mapDoubleClick}
+                  onPointerMove={moveSeats}
+                  onPointerUp={finishSeatMove}
+                  onPointerCancel={finishSeatMove}
+                  onPointerDown={(event) => {
+                    if (event.target === event.currentTarget) {
+                      setSelected(null);
+                      setSelectedIds(new Set());
+                    }
+                  }}
                   style={{
                     width: `${zoom * 100}%`,
                     height: `${zoom * 100}%`,
@@ -589,14 +933,20 @@ export function SeatMapPage() {
                     <g
                       key={seat.id}
                       transform={`rotate(${seat.rotation} ${seat.x * 1000 + seat.width * 500} ${seat.y * 700 + seat.height * 350})`}
-                      onClick={() => setSelected(seat)}
+                      onPointerDown={(event) => beginSeatMove(event, seat)}
+                      onClick={() => {
+                        if (!editMode) setSelected(seat);
+                      }}
                       onDoubleClick={(event) => {
                         event.stopPropagation();
-                        if (manager) setEditor(seat);
+                        if (manager && editMode) setEditor(seat);
                       }}
                       onDragOver={(e) => manager && e.preventDefault()}
                       onDrop={(e) => void drop(e, seat)}
-                      style={{ cursor: "pointer" }}
+                      style={{
+                        cursor: editMode ? "move" : "pointer",
+                        touchAction: editMode ? "none" : "auto",
+                      }}
                     >
                       <rect
                         x={seat.x * 1000}
@@ -606,13 +956,17 @@ export function SeatMapPage() {
                         rx="6"
                         fill={seatColor(seat)}
                         stroke={
-                          selected?.id === seat.id
+                          selectedIds.has(seat.id) || selected?.id === seat.id
                             ? "#FFB703"
                             : seat.confidence && seat.confidence < 0.95
                               ? "#E79418"
                               : "#263E4D"
                         }
-                        strokeWidth={selected?.id === seat.id ? 5 : 2}
+                        strokeWidth={
+                          selectedIds.has(seat.id) || selected?.id === seat.id
+                            ? 5
+                            : 2
+                        }
                       />
                       <text
                         x={(seat.x + seat.width / 2) * 1000}
@@ -670,7 +1024,54 @@ export function SeatMapPage() {
             </Box>
           </Paper>
           <Paper sx={{ p: 2.5, minHeight: { xs: 220, lg: 0 } }}>
-            {selected ? (
+            {editMode && selectedIds.size > 1 ? (
+              <Stack spacing={2.2}>
+                <Box>
+                  <Chip size="small" color="primary" label="다중 선택" />
+                  <Typography variant="h5" sx={{ mt: 1.5 }}>
+                    좌석 {selectedIds.size}개
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    선택한 좌석을 한 번에 정렬하거나 회전할 수 있습니다.
+                  </Typography>
+                </Box>
+                <Divider />
+                <Button
+                  variant="outlined"
+                  startIcon={<AlignHorizontalLeftRounded />}
+                  onClick={() => applyTransform("left")}
+                >
+                  왼쪽 맞춤
+                </Button>
+                <Button
+                  variant="outlined"
+                  startIcon={<VerticalAlignTopRounded />}
+                  onClick={() => applyTransform("top")}
+                >
+                  위쪽 맞춤
+                </Button>
+                <Button
+                  variant="outlined"
+                  startIcon={<RotateRightRounded />}
+                  onClick={() => applyTransform("rotate")}
+                >
+                  90° 회전
+                </Button>
+                <Alert severity="info" icon={<OpenWithRounded />}>
+                  Shift+클릭으로 선택을 추가하고, 방향키로 5px씩 이동합니다.
+                  Shift+방향키는 20px 이동입니다.
+                </Alert>
+                <Button
+                  color="inherit"
+                  onClick={() => {
+                    setSelectedIds(new Set());
+                    setSelected(null);
+                  }}
+                >
+                  선택 해제
+                </Button>
+              </Stack>
+            ) : selected ? (
               <>
                 <Stack
                   direction="row"
@@ -707,7 +1108,7 @@ export function SeatMapPage() {
                   {selected.seatNo}
                 </Typography>
                 <Divider sx={{ my: 2 }} />
-                {manager && (
+                {manager && editMode && (
                   <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
                     <Button
                       size="small"

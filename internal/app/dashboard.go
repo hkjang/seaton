@@ -32,7 +32,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	counts := map[string]int{}
 	queries := map[string]string{
 		"unassignedEmployees": `SELECT count(*) FROM employees e WHERE e.status='active' AND NOT EXISTS(SELECT 1 FROM seat_assignments a WHERE a.employee_id=e.id AND a.ended_at IS NULL)`,
-		"unusedSeats":         `SELECT count(*) FROM seats s JOIN floor_maps m ON m.id=s.floor_map_id WHERE m.is_active AND s.status='available'`,
+		"unusedSeats":         `SELECT count(*) FROM seats s JOIN floor_maps m ON m.id=s.floor_map_id WHERE m.is_active AND s.status='available' AND NOT EXISTS(SELECT 1 FROM seat_assignments a WHERE a.seat_id=s.id AND a.ended_at IS NULL)`,
 		"retiredAssignments":  `SELECT count(*) FROM seat_assignments a JOIN employees e ON e.id=a.employee_id WHERE a.ended_at IS NULL AND e.status='retired'`,
 		"organizationMismatch": `SELECT count(*) FROM seat_assignments a JOIN employees e ON e.id=a.employee_id JOIN seats s ON s.id=a.seat_id
 			WHERE a.ended_at IS NULL AND s.organization_id IS NOT NULL AND e.organization_id IS DISTINCT FROM s.organization_id`,
@@ -205,7 +205,10 @@ func (s *Server) resolveDashboardIssue(w http.ResponseWriter, r *http.Request) {
 		}
 		_, _ = tx.Exec(r.Context(), `UPDATE seats SET status='available',updated_at=now() WHERE id=$1`, seatID)
 		_, err = tx.Exec(r.Context(), `INSERT INTO seat_history(id,employee_id,previous_seat_id,changed_by,reason,source) VALUES($1,$2,$3,$4,'처리필요에서 퇴직자 좌석 해제','dashboard')`, newID(), employeeID, seatID, u.ID)
-		if err != nil || tx.Commit(r.Context()) != nil {
+		if err == nil {
+			err = tx.Commit(r.Context())
+		}
+		if err != nil {
 			notFoundOrServer(w, err)
 			return
 		}
@@ -262,7 +265,10 @@ func (s *Server) resolveAllRetiredAssignments(w http.ResponseWriter, r *http.Req
 			break
 		}
 	}
-	if err != nil || tx.Commit(r.Context()) != nil {
+	if err == nil {
+		err = tx.Commit(r.Context())
+	}
+	if err != nil {
 		notFoundOrServer(w, err)
 		return
 	}

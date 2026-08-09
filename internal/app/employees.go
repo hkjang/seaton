@@ -59,11 +59,12 @@ func (s *Server) listEmployees(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	org := r.URL.Query().Get("organizationId")
 	status := r.URL.Query().Get("status")
+	assignment := r.URL.Query().Get("assignment")
 	limit := 100
 	if v, _ := strconv.Atoi(r.URL.Query().Get("limit")); v > 0 && v <= 500 {
 		limit = v
 	}
-	rows, err := s.db.Query(r.Context(), `SELECT e.id,e.employee_no,e.name,COALESCE(e.email,''),e.organization_id,COALESCE(o.name,''),COALESCE(e.title,''),COALESCE(e.position,''),COALESCE(e.workplace,''),e.status,a.seat_id,COALESCE(se.seat_no,'') FROM employees e LEFT JOIN organizations o ON o.id=e.organization_id LEFT JOIN seat_assignments a ON a.employee_id=e.id AND a.ended_at IS NULL LEFT JOIN seats se ON se.id=a.seat_id WHERE ($1='' OR e.name ILIKE '%%'||$1||'%%' OR e.employee_no ILIKE '%%'||$1||'%%' OR e.email ILIKE '%%'||$1||'%%' OR o.name ILIKE '%%'||$1||'%%') AND ($2='' OR e.organization_id=$2) AND ($3='' OR e.status=$3) ORDER BY e.name LIMIT $4`, q, org, status, limit)
+	rows, err := s.db.Query(r.Context(), `SELECT e.id,e.employee_no,e.name,COALESCE(e.email,''),e.organization_id,COALESCE(o.name,''),COALESCE(e.title,''),COALESCE(e.position,''),COALESCE(e.workplace,''),e.status,a.seat_id,COALESCE(se.seat_no,'') FROM employees e LEFT JOIN organizations o ON o.id=e.organization_id LEFT JOIN seat_assignments a ON a.employee_id=e.id AND a.ended_at IS NULL LEFT JOIN seats se ON se.id=a.seat_id WHERE ($1='' OR e.name ILIKE '%%'||$1||'%%' OR e.employee_no ILIKE '%%'||$1||'%%' OR e.email ILIKE '%%'||$1||'%%' OR o.name ILIKE '%%'||$1||'%%') AND ($2='' OR e.organization_id=$2) AND ($3='' OR e.status=$3) AND ($4='' OR ($4='assigned' AND a.seat_id IS NOT NULL) OR ($4='unassigned' AND a.seat_id IS NULL)) ORDER BY e.name LIMIT $5`, q, org, status, assignment, limit)
 	if err != nil {
 		notFoundOrServer(w, err)
 		return

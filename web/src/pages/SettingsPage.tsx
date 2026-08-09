@@ -18,7 +18,10 @@ import {
 } from "@mui/material";
 import SaveRounded from "@mui/icons-material/SaveRounded";
 import LinkRounded from "@mui/icons-material/LinkRounded";
+import CheckCircleRounded from "@mui/icons-material/CheckCircleRounded";
+import WarningAmberRounded from "@mui/icons-material/WarningAmberRounded";
 import { api, postJSON, putJSON } from "../api";
+import { PageHeader } from "../components/AdminUI";
 
 type Setting = {
   key: string;
@@ -98,6 +101,7 @@ export function SettingsPage() {
     [tab, setTab] = useState("general"),
     [message, setMessage] = useState(""),
     [error, setError] = useState(""),
+    [saving, setSaving] = useState(false),
     [currentPassword, setCurrentPassword] = useState(""),
     [newPassword, setNewPassword] = useState("");
   const load = async () => {
@@ -116,18 +120,35 @@ export function SettingsPage() {
     () => Object.fromEntries(items.map((x) => [x.key, x.configured])),
     [items],
   );
+  const dirty = useMemo(
+    () => items.some((item) => (values[item.key] ?? "") !== item.value),
+    [items, values],
+  );
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => {
+      if (!dirty) return;
+      event.preventDefault();
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
   const save = async () => {
+    setSaving(true);
     try {
       await putJSON("/api/v1/settings", { settings: values });
       setMessage("설정을 저장했습니다. 새 요청부터 즉시 적용됩니다.");
       await load();
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : "저장하지 못했습니다");
+      return false;
+    } finally {
+      setSaving(false);
     }
   };
   const test = async () => {
     try {
-      await save();
+      if (!(await save())) return;
       const result = await api<{ issuer: string; redirectUri: string }>(
         "/api/v1/settings/oidc/test",
         { method: "POST" },
@@ -141,7 +162,7 @@ export function SettingsPage() {
   };
   const syncNow = async () => {
     try {
-      await save();
+      if (!(await save())) return;
       const result = await api<{ employees: number; organizations: number }>(
         "/api/v1/settings/hr/sync",
         { method: "POST" },
@@ -190,10 +211,27 @@ export function SettingsPage() {
   );
   return (
     <Box sx={{ p: { xs: 2, md: 3 }, maxWidth: 1100, mx: "auto" }}>
-      <Typography variant="h5">시스템 설정</Typography>
-      <Typography color="text.secondary" mb={3}>
-        환경변수 없이 관리자 화면에서 연동과 정책을 관리합니다.
-      </Typography>
+      <PageHeader
+        eyebrow="SYSTEM CONTROL"
+        title="시스템 설정"
+        description="최초 실행 환경변수는 3개뿐이며, 이후 SSO·인사·AI·보안 정책은 이 화면에서 운영합니다."
+        actions={
+          dirty ? (
+            <Chip
+              icon={<WarningAmberRounded />}
+              color="warning"
+              label="저장하지 않은 변경"
+            />
+          ) : (
+            <Chip
+              icon={<CheckCircleRounded />}
+              color="success"
+              variant="outlined"
+              label="모든 변경 저장됨"
+            />
+          )
+        }
+      />
       {message && (
         <Alert severity="success" onClose={() => setMessage("")} sx={{ mb: 2 }}>
           {message}
@@ -205,6 +243,25 @@ export function SettingsPage() {
         </Alert>
       )}
       <Card>
+        <Stack
+          direction={{ xs: "column", sm: "row" }}
+          spacing={1}
+          sx={{ px: 2.5, pt: 2 }}
+        >
+          <Chip
+            size="small"
+            color={values["oidc.enabled"] === "true" ? "success" : "default"}
+            variant="outlined"
+            label={`Keycloak ${values["oidc.enabled"] === "true" ? "활성" : "비활성"}`}
+          />
+          <Chip
+            size="small"
+            color={values["hr.sync_enabled"] === "true" ? "success" : "default"}
+            variant="outlined"
+            label={`인사 동기화 ${values["hr.sync_enabled"] === "true" ? "활성" : "비활성"}`}
+          />
+          <Chip size="small" variant="outlined" label="오프라인 CV 엔진" />
+        </Stack>
         <Tabs
           value={tab}
           onChange={(_, v) => setTab(v)}
@@ -294,7 +351,18 @@ export function SettingsPage() {
             </Box>
           )}
           <Divider sx={{ my: 3 }} />
-          <Stack direction="row" justifyContent="flex-end" spacing={1}>
+          <Stack
+            direction={{ xs: "column-reverse", sm: "row" }}
+            justifyContent="flex-end"
+            spacing={1}
+            sx={{
+              position: "sticky",
+              bottom: 0,
+              bgcolor: "background.paper",
+              py: 1,
+              zIndex: 1,
+            }}
+          >
             {tab === "hr" && (
               <Button
                 startIcon={<LinkRounded />}
@@ -311,9 +379,10 @@ export function SettingsPage() {
             <Button
               variant="contained"
               startIcon={<SaveRounded />}
+              disabled={!dirty || saving}
               onClick={() => void save()}
             >
-              설정 저장
+              {saving ? "저장 중…" : "설정 저장"}
             </Button>
           </Stack>
         </CardContent>

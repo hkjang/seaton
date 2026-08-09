@@ -22,12 +22,16 @@ Authorization: Bearer seat_xxxxxxxxxxxxxxxxxxxxxxxxx
 
 OpenAPI 3.1 문서는 실행 중인 SeatOn의 `/api/v1/openapi.json`에서 확인한다. 대표 경로는 다음과 같다.
 
-- `GET /api/v1/employees?q=` 직원/조직 검색
+- `GET /api/v1/employees?q=&status=&assignment=` 직원/조직 및 재직·배정 상태 검색
 - `GET /api/v1/seats?floorMapId=` 좌석 및 배정 조회
+- `PATCH /api/v1/seats/bulk` 다중 좌석 위치·회전 일괄 저장
 - `POST /api/v1/seat-assignments` 좌석 배정
 - `POST /api/v1/seat-assignments/bulk` CSV/XLSX 일괄 배정
 - `POST /api/v1/floor-maps/{id}/analyze` 오프라인 도면 분석
 - `GET /api/v1/seat-history` 변경 이력
+- `GET /api/v1/dashboard` 운영 준비도와 처리 필요 건수
+- `GET /api/v1/dashboard/issues?kind=` 처리 필요 상세 작업 큐
+- `POST /api/v1/dashboard/issues/{kind}/{id}/resolve` 퇴직자 좌석 해제, AI 후보 승인, 조직 영역 보정
 
 ## MCP
 

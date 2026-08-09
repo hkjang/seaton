@@ -105,8 +105,10 @@ func (s *Server) createFloor(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listFloorMaps(w http.ResponseWriter, r *http.Request) {
 	floorID := r.URL.Query().Get("floorId")
-	rows, err := s.db.Query(r.Context(), `SELECT m.id,m.floor_id,m.version,m.file_name,m.content_type,m.width,m.height,m.status,m.is_active,m.created_at,f.name,b.name
-	FROM floor_maps m JOIN floors f ON f.id=m.floor_id JOIN buildings b ON b.id=f.building_id WHERE ($1='' OR m.floor_id=$1) ORDER BY m.created_at DESC`, floorID)
+	rows, err := s.db.Query(r.Context(), `SELECT m.id,m.floor_id,m.version,m.file_name,m.content_type,m.width,m.height,m.status,m.is_active,m.created_at,f.name,b.name,stats.seat_count,stats.review_count
+	FROM floor_maps m JOIN floors f ON f.id=m.floor_id JOIN buildings b ON b.id=f.building_id
+	LEFT JOIN LATERAL (SELECT COUNT(*) seat_count,COUNT(*) FILTER(WHERE confidence IS NOT NULL AND confidence < .95) review_count FROM seats s WHERE s.floor_map_id=m.id) stats ON true
+	WHERE ($1='' OR m.floor_id=$1) ORDER BY m.created_at DESC`, floorID)
 	if err != nil {
 		notFoundOrServer(w, err)
 		return
@@ -117,9 +119,10 @@ func (s *Server) listFloorMaps(w http.ResponseWriter, r *http.Request) {
 		var id, fid, version, name, ct, status, fname, bname string
 		var width, height *int
 		var active bool
+		var seatCount, reviewCount int
 		var created any
-		if rows.Scan(&id, &fid, &version, &name, &ct, &width, &height, &status, &active, &created, &fname, &bname) == nil {
-			items = append(items, map[string]any{"id": id, "floorId": fid, "version": version, "fileName": name, "contentType": ct, "width": width, "height": height, "status": status, "active": active, "createdAt": created, "floorName": fname, "buildingName": bname, "contentUrl": "/api/v1/floor-maps/" + id + "/content"})
+		if rows.Scan(&id, &fid, &version, &name, &ct, &width, &height, &status, &active, &created, &fname, &bname, &seatCount, &reviewCount) == nil {
+			items = append(items, map[string]any{"id": id, "floorId": fid, "version": version, "fileName": name, "contentType": ct, "width": width, "height": height, "status": status, "active": active, "createdAt": created, "floorName": fname, "buildingName": bname, "seatCount": seatCount, "reviewCount": reviewCount, "contentUrl": "/api/v1/floor-maps/" + id + "/content"})
 		}
 	}
 	writeJSON(w, 200, map[string]any{"items": items})
