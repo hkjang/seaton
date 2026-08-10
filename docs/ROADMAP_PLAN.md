@@ -1,21 +1,22 @@
 # SeatOn 엔터프라이즈 중장기 기술 로드맵 (Product Roadmap Plan)
 
-- **문서 버전**: v1.0.0 ~ v3.0-VISION  
-- **작성일자**: 2026년 8월 9일  
-- **문서 분류**: 비즈니스 및 아키텍처 중장기 로드맵 (Strategic Product Roadmap)  
+- **문서 버전**: v1.1.0 ~ v3.0-VISION
+- **작성일자**: 2026년 8월 11일
+- **문서 분류**: 비즈니스 및 아키텍처 중장기 로드맵 (Strategic Product Roadmap)
 
 ---
 
 ## 1. 비전 및 발전 마일스톤 개요
 
-SeatOn 플랫폼은 오프라인 CV 도면 분석 및 SVG 비율좌표 스마트 좌석 관리를 시작으로, 사내 AI 데이터 에이전트와 대화형으로 오피스 공간 및 좌석을 자동 추천·예약하는 차세대 Autonomous Smart Office Platform으로 진화합니다.
+SeatOn 플랫폼은 오프라인 도면 판독과 비율 좌표 좌석 관리를 기반으로, 사내 AI 에이전트와 대화형으로 오피스 공간을 추천·배정하는 Autonomous Smart Office Platform으로 진화합니다. 모든 단계에서 **에어갭 환경에서 기능이 완결되어야 한다**는 원칙을 유지합니다. 외부 모델이나 클라우드 서비스는 선택 사항이며, 설정하지 않아도 제품이 온전히 동작합니다.
 
 ```
 ==================================================================================================
                                 [SeatOn 단계별 마일스톤 아키텍처]
 ==================================================================================================
- [Phase 1: v1.0.0] (완료) ➔ Offline CV Parsing, SVG Coordinate Engine, Anomaly Seat Detection
- [Phase 2: v1.5.0] (진행) ➔ Multi-Building Floorplan Sync & Real-Time IoT Sensor Integration
+ [Phase 1: v1.0.0] (완료)    ➔ Offline CV Parsing, SVG Coordinate Engine, Anomaly Seat Detection
+ [Phase 1.5: v1.1.0] (완료)  ➔ Pluggable Detection Engines (CV / VLM / Hybrid), Grid Calibration
+ [Phase 2: v1.5.0] (진행)    ➔ Multi-Building Floorplan Sync & Real-Time IoT Sensor Integration
  [Phase 3: v2.0.0] (2026 Q4) ➔ AI Auto Seat Allocation Copilot (NL-to-Space Action MCP 2.0)
  [Phase 4: v3.0.0] (2027)    ➔ Predictive Office Space Analytics & Autonomous Energy Saving
 ==================================================================================================
@@ -26,17 +27,34 @@ SeatOn 플랫폼은 오프라인 CV 도면 분석 및 SVG 비율좌표 스마트
 ## 2. Phase별 세부 기술 명세 및 추진 전략
 
 ### 2.1 Phase 1: v1.0.0 오프라인 스마트 좌석 플랫폼 구축 (완료)
-- **도면 CV & SVG 엔진**: PNG/PDF 도면 오프라인 CV 후보 파싱, 비율 좌표 SVG 좌석 편집기.
-- **이상 좌석 감지**: 미배정, 퇴직자 점유, 조직 구역 불일치 자동 감지.
-- **Keycloak OIDC & Break Glass**: PKCE SSO 연동 및 3대 환경변수 부트스트랩.
-- **Streamable HTTP MCP**: AI 에이전트를 위한 8개 이상의 ACL-aware MCP Tools 탑재.
 
-### 2.2 Phase 2: v1.5.0 멀티 사옥 도면 동기화 & 실시간 센서 연동 (2026 Q3)
+- **도면 CV & SVG 엔진**: PNG/JPG/PDF 도면 오프라인 후보 파싱, 비율 좌표 SVG 좌석 편집기.
+- **이상 좌석 감지**: 미배정, 퇴직자 점유, 조직 구역 불일치, 저신뢰 좌석 자동 감지.
+- **Keycloak OIDC & Break Glass**: PKCE SSO 연동 및 3대 환경변수 부트스트랩.
+- **Streamable HTTP MCP**: AI 에이전트를 위한 5개 ACL-aware MCP Tools 탑재.
+
+### 2.2 Phase 1.5: v1.1.0 좌석 매핑 정확도와 판독 엔진 선택 (완료)
+
+Phase 1의 가장 큰 실사용 마찰은 인식률이 아니라 **좌석이 도면과 어긋나는 문제**였습니다. 좌표계를 도면 원본 비율에 정렬하고, 판독 엔진을 교체 가능한 구조로 바꿨습니다.
+
+- **좌표계 정합**: 좌석맵 좌표계를 도면 픽셀 비율에 맞춰 비율 좌표가 1:1 대응하도록 수정. 이전에는 10:7 고정이어서 세로 도면에서 좌석이 도면 너비의 40%까지 밀렸습니다. 포인터 입력도 같은 좌표계로 변환해 드래그 정밀도를 확보했습니다.
+- **PDF 좌석 오버레이**: PDF 첫 페이지를 래스터화해 보관하고, 좌석 오버레이와 판독이 같은 이미지를 기준으로 동작하도록 통일.
+- **도면별 격자 보정**: 도면마다 책상 열 간격을 저장해 스냅과 일괄 정렬이 실제 배치를 따르게 함. 관리자 보정값과 자동 추론값을 출처로 구분해, 잘못 추론된 격자가 영구히 남지 않도록 처리.
+- **판독 엔진 재설계(`offline-cv-v2`)**: Otsu 이진화, 벽·치수선 제거, 크기 군집 중 격자 정합도가 가장 높은 묶음 선택. 벽선이 관통하는 책상과 저대비 스캔 도면에서 이전 구현은 후보를 전혀 만들지 못했습니다.
+- **선택형 비전 모델(VLM) 판독**: OpenAI 호환 사내 추론 서버로 Qwen2.5-VL 계열을 호출하는 경로 추가. 모델이 좌표계와 상자 형식을 임의로 바꿔도 자동 판별합니다.
+- **교차 검증(하이브리드)**: CV의 기하 정확도와 VLM의 의미 이해를 IoU로 교차 검증하고, 보정되지 않은 모델 확신도가 자동 승인으로 이어지지 않도록 신뢰도 상한을 둠.
+- **비동기 분석 작업**: 판독을 백그라운드 잡으로 분리해 장시간 추론이 HTTP 응답 제한에 걸리지 않게 하고, 중단된 작업을 자동 복구.
+
+### 2.3 Phase 2: v1.5.0 멀티 사옥 도면 동기화 & 실시간 센서 연동 (2026 Q3)
+
 - **다중 건물/사옥 통합 뷰**: 본사, 지사, R&D 센터 멀티 사옥 레이아웃 통합 관리.
 - **IoT 모션 센서 연동**: 좌석 재실 센서 데이터 실시간 바인딩.
+- **도면 버전 간 좌석 이관**: 새 도면 버전을 올릴 때 이전 버전의 좌석과 배정을 좌표 기준으로 자동 승계.
 
-### 2.3 Phase 3: v2.0.0 AI 자율 좌석 코파일럿 (2026 Q4)
-- **NL-to-Space Action (MCP 2.0)**: AI 에이전트에 "10층 개발팀 구역 근처에 빈 좌석 찾아 배정해줘" 요청 시 권한 검증 후 자동 배치.
+### 2.4 Phase 3: v2.0.0 AI 자율 좌석 코파일럿 (2026 Q4)
+
+- **NL-to-Space Action (MCP 2.0)**: "10층 개발팀 구역 근처에 빈 좌석 찾아 배정해줘" 같은 요청을 권한 검증 후 자동 처리.
+- **판독 품질 피드백 루프**: 관리자가 교정한 좌석을 판독 품질 지표로 축적해 엔진·프롬프트 선택을 데이터로 결정.
 
 ---
 
@@ -45,5 +63,18 @@ SeatOn 플랫폼은 오프라인 CV 도면 분석 및 SVG 비율좌표 스마트
 | 위험 요소 | 영향도 | 발생 가능성 | 대응 및 완화 전략 |
 | :--- | :--- | :--- | :--- |
 | **PostgreSQL DB 장애** | High | Low | Multi-AZ HA 클러스터 및 Read-Replica 구축 |
-| **도면 CV 파싱 오차** | Medium | Medium | 신뢰도 점수 기반 관리자 수동 교정 레이어 제공 |
+| **도면 판독 오차** | Medium | Medium | 신뢰도 점수 기반 검토 큐, 격자 보정, 엔진 교차 검증 |
+| **비전 모델 오검출 유입** | Medium | Medium | 모델 단독 결과에 신뢰도 상한 적용, 격자를 벗어난 결과 제외, 실패 시 CV 폴백 |
+| **비전 모델 서버 장애** | Low | Medium | 판독 실패 시 CV 결과로 자동 대체하여 작업 자체는 완료 |
 | **Master Key 분실** | High | Low | `/var/lib/seaton/master.key` 자동 이중화 백업 |
+
+---
+
+## 4. 문서 산출물 관리
+
+`docs/*.md` 가 단일 원본이며, 배포용 HTML과 PDF는 `scripts/build-docs.py` 로 생성합니다. 문서를 고칠 때는 Markdown만 수정한 뒤 스크립트를 다시 실행하십시오.
+
+```bash
+python3 scripts/build-docs.py            # 전체 재생성
+python3 scripts/build-docs.py ADMIN_GUIDE # 특정 문서만
+```

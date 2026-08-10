@@ -40,12 +40,12 @@
 외부 또는 사내 PostgreSQL 14+ 데이터베이스를 준비한다. SeatOn이 시작할 때 스키마를 자동 생성한다.
 
 ```bash
-docker load < SeatOn-v1.0.0-linux-amd64-image.tar.gz
+docker load < SeatOn-v1.1.0-linux-amd64-image.tar.gz
 
 export POSTGRES_DSN='postgres://seaton:password@postgres.intra:5432/seaton?sslmode=require'
 export BOOTSTRAP_ADMIN='admin'
 export BOOTSTRAP_ADMIN_PASSWORD='change-this-strong-password'
-export SEATON_IMAGE_TAG='1.0.0'
+export SEATON_IMAGE_TAG='1.1.0'
 docker compose up -d
 ```
 
@@ -100,13 +100,25 @@ docker build -t seaton:dev .
 
 API/MCP 세부사항은 [docs/API_AND_MCP.md](docs/API_AND_MCP.md), 보안·배치 구조는 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), 운영과 엔진 설정은 [docs/ADMIN_GUIDE.md](docs/ADMIN_GUIDE.md)를 참고한다.
 
+### 문서 산출물
+
+`docs/*.md` 가 단일 원본이고 배포용 HTML·PDF는 생성물이다. 문서를 고친 뒤에는 생성 스크립트를 다시 실행한다.
+
+```bash
+pip install reportlab
+python3 scripts/build-docs.py             # docs 전체 HTML + PDF 재생성
+python3 scripts/build-docs.py ADMIN_GUIDE  # 특정 문서만
+```
+
+PDF는 `docs/fonts/NanumGothic.ttf` 를 임베드하므로 한글 폰트가 없는 환경에서도 동일하게 열린다.
+
 ## 릴리스
 
-`v1.0.0` 형태의 태그를 push하면 GitHub Actions가 `linux/amd64` 서비스 이미지를 빌드하고 `docker save` 결과만 `tar.gz`로 GitHub Release에 첨부한다. 런타임에는 레지스트리나 인터넷이 필요 없다.
+`v1.1.0` 형태의 태그를 push하면 GitHub Actions가 `linux/amd64` 서비스 이미지를 빌드하고 `docker save` 결과만 `tar.gz`로 GitHub Release에 첨부한다. 런타임에는 레지스트리나 인터넷이 필요 없다.
 
 로컬 검증은 다음과 같다.
 
 ```bash
-./scripts/release-image.sh 1.0.0
-gzip -t SeatOn-v1.0.0-linux-amd64-image.tar.gz
+./scripts/release-image.sh 1.1.0
+gzip -t SeatOn-v1.1.0-linux-amd64-image.tar.gz
 ```
