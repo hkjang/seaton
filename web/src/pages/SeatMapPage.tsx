@@ -43,6 +43,9 @@ import EditRounded from "@mui/icons-material/EditRounded";
 import DeleteOutlineRounded from "@mui/icons-material/DeleteOutlineRounded";
 import OpenWithRounded from "@mui/icons-material/OpenWithRounded";
 import GridOnRounded from "@mui/icons-material/GridOnRounded";
+import GridOffRounded from "@mui/icons-material/GridOffRounded";
+import StraightenRounded from "@mui/icons-material/StraightenRounded";
+import AutoFixHighRounded from "@mui/icons-material/AutoFixHighRounded";
 import UndoRounded from "@mui/icons-material/UndoRounded";
 import RedoRounded from "@mui/icons-material/RedoRounded";
 import DoneRounded from "@mui/icons-material/DoneRounded";
@@ -50,9 +53,16 @@ import VerticalAlignTopRounded from "@mui/icons-material/VerticalAlignTopRounded
 import AlignHorizontalLeftRounded from "@mui/icons-material/AlignHorizontalLeftRounded";
 import RotateRightRounded from "@mui/icons-material/RotateRightRounded";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { api, patchJSON, postJSON } from "../api";
+import { api, patchJSON, postJSON, putJSON } from "../api";
 import { useAuth } from "../auth";
-import type { Building, Employee, Floor, FloorMap, Seat } from "../types";
+import type {
+  Building,
+  Employee,
+  Floor,
+  FloorMap,
+  Seat,
+  SeatGrid,
+} from "../types";
 
 const seatColor = (seat: Seat) =>
   seat.type === "unavailable" || seat.status === "unavailable"
@@ -69,14 +79,65 @@ type ActiveDrag = {
   pointerId: number;
   startX: number;
   startY: number;
-  width: number;
-  height: number;
   before: SeatPosition[];
   after: SeatPosition[];
+};
+const fallbackCanvas = { width: 1000, height: 700 };
+
+// 좌석은 도면 대비 비율 좌표로 저장되므로, viewBox를 도면 원본 비율과
+// 동일하게 잡아야 비율 좌표가 도면 픽셀에 1:1로 대응한다.
+const canvasFor = (map?: FloorMap) => {
+  const width = map?.width ?? 0,
+    height = map?.height ?? 0;
+  if (width <= 0 || height <= 0) return fallbackCanvas;
+  const scale = 1000 / Math.max(width, height);
+  return {
+    width: Math.round(width * scale),
+    height: Math.round(height * scale),
+  };
 };
 
 const clamp = (value: number, maximum: number) =>
   Math.max(0, Math.min(maximum, value));
+
+const MIN_GRID_PITCH = 0.004;
+
+// deriveGrid는 선택된 좌석들의 좌표에서 반복 간격을 읽어 격자 보정값을 만든다.
+// 관리자가 대표 좌석 몇 개만 골라주면 도면 전체 격자가 정해진다.
+const deriveGrid = (selection: Seat[]): SeatGrid | null => {
+  if (selection.length < 2) return null;
+  // 같은 값끼리 뭉친 뒤 이웃 간 최소 간격을 주기로 본다.
+  const spacing = (values: number[], fallbackSize: number) => {
+    const unique = [...new Set(values.map((v) => Math.round(v * 10000)))]
+      .map((v) => v / 10000)
+      .sort((a, b) => a - b);
+    const gaps = unique
+      .slice(1)
+      .map((v, i) => v - unique[i])
+      .filter((gap) => gap >= MIN_GRID_PITCH);
+    if (!gaps.length) return fallbackSize >= MIN_GRID_PITCH ? fallbackSize : 0;
+    return Math.min(...gaps);
+  };
+  const widths = selection.map((s) => s.width);
+  const heights = selection.map((s) => s.height);
+  const pitchX = spacing(
+    selection.map((s) => s.x),
+    Math.max(...widths),
+  );
+  const pitchY = spacing(
+    selection.map((s) => s.y),
+    Math.max(...heights),
+  );
+  if (pitchX < MIN_GRID_PITCH || pitchY < MIN_GRID_PITCH) return null;
+  const originX = Math.min(...selection.map((s) => s.x));
+  const originY = Math.min(...selection.map((s) => s.y));
+  return {
+    originX: originX % pitchX,
+    originY: originY % pitchY,
+    pitchX: Math.min(0.5, pitchX),
+    pitchY: Math.min(0.5, pitchY),
+  };
+};
 
 export function SeatMapPage() {
   const { user } = useAuth(),
@@ -97,6 +158,7 @@ export function SeatMapPage() {
     [loading, setLoading] = useState(true),
     [zoom, setZoom] = useState(1),
     [error, setError] = useState(""),
+    [notice, setNotice] = useState(""),
     [editor, setEditor] = useState<Partial<Seat> | null>(null);
   const [editMode, setEditMode] = useState(
       Boolean(manager && searchParams.get("edit") === "1"),
@@ -164,6 +226,41 @@ export function SeatMapPage() {
     [maps, floorId],
   );
   const currentMap = maps.find((m) => m.id === mapId);
+  const canvas = useMemo(() => canvasFor(currentMap), [currentMap]);
+  // 비율 좌표는 축마다 기준 길이가 달라서, 같은 화면 거리를 만들려면 y값에 이 비율을 곱한다.
+  const aspect = canvas.width / canvas.height;
+  // 도면에 보정된 격자가 있으면 스냅 간격을 실제 책상 열 간격에 맞춘다.
+  const grid = currentMap?.grid ?? null;
+  const snapPoint = (x: number, y: number): [number, number] => {
+    // 자유 이동에서도 좌표에 부동소수 잡음이 남지 않도록 최소 단위는 유지한다.
+    if (!snapEnabled)
+      return [Math.round(x / 0.001) * 0.001, Math.round(y / 0.001) * 0.001];
+    if (grid)
+      return [
+        grid.originX +
+          Math.round((x - grid.originX) / grid.pitchX) * grid.pitchX,
+        grid.originY +
+          Math.round((y - grid.originY) / grid.pitchY) * grid.pitchY,
+      ];
+    const step = 0.005;
+    return [
+      Math.round(x / step) * step,
+      Math.round(y / (step * aspect)) * (step * aspect),
+    ];
+  };
+  const toMapPoint = (
+    svg: SVGSVGElement,
+    clientX: number,
+    clientY: number,
+  ): { x: number; y: number } | null => {
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return null;
+    const point = svg.createSVGPoint();
+    point.x = clientX;
+    point.y = clientY;
+    const local = point.matrixTransform(ctm.inverse());
+    return { x: local.x / canvas.width, y: local.y / canvas.height };
+  };
   const chooseBuilding = (id: string) => {
     setBuildingId(id);
     const fid = floors.find((f) => f.buildingId === id)?.id || "";
@@ -246,25 +343,27 @@ export function SeatMapPage() {
       setError(e instanceof Error ? e.message : "좌석을 배정하지 못했습니다");
     }
   };
-  const openNewSeat = (x = 0.45, y = 0.45) =>
+  const openNewSeat = (x = 0.45, y = 0.45) => {
+    // 도면 비율과 무관하게 화면에서 정사각형으로 보이도록 높이 비율을 보정한다.
+    const width = 0.04,
+      height = Math.min(0.5, width * aspect);
     setEditor({
       floorMapId: mapId,
       seatNo: `NEW-${String(seats.length + 1).padStart(3, "0")}`,
       type: "fixed",
       status: "available",
-      x: Math.max(0, Math.min(0.94, x)),
-      y: Math.max(0, Math.min(0.92, y)),
-      width: 0.04,
-      height: 0.055,
+      x: clamp(x - width / 2, 1 - width),
+      y: clamp(y - height / 2, 1 - height),
+      width,
+      height,
       rotation: 0,
     });
+  };
   const mapDoubleClick = (event: ReactMouseEvent<SVGSVGElement>) => {
     if (!manager || !editMode) return;
-    const bounds = event.currentTarget.getBoundingClientRect();
-    openNewSeat(
-      (event.clientX - bounds.left) / bounds.width,
-      (event.clientY - bounds.top) / bounds.height,
-    );
+    const point = toMapPoint(event.currentTarget, event.clientX, event.clientY);
+    if (!point) return;
+    openNewSeat(point.x, point.y);
   };
   const saveSeat = async () => {
     if (!editor) return;
@@ -366,14 +465,13 @@ export function SeatMapPage() {
       .map(({ id, x, y, rotation }) => ({ id, x, y, rotation }));
     const svg = event.currentTarget.ownerSVGElement;
     if (!svg) return;
-    const bounds = svg.getBoundingClientRect();
+    const start = toMapPoint(svg, event.clientX, event.clientY);
+    if (!start) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     dragRef.current = {
       pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      width: bounds.width,
-      height: bounds.height,
+      startX: start.x,
+      startY: start.y,
       before,
       after: before,
     };
@@ -381,20 +479,18 @@ export function SeatMapPage() {
   const moveSeats = (event: ReactPointerEvent<SVGSVGElement>) => {
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
-    const dx = (event.clientX - drag.startX) / drag.width;
-    const dy = (event.clientY - drag.startY) / drag.height;
-    const step = snapEnabled ? 0.005 : 0.001;
+    const point = toMapPoint(event.currentTarget, event.clientX, event.clientY);
+    if (!point) return;
+    const dx = point.x - drag.startX;
+    const dy = point.y - drag.startY;
     const after = drag.before.map((position) => {
       const seat = seats.find((item) => item.id === position.id);
-      const x = clamp(
-        Math.round((position.x + dx) / step) * step,
-        1 - (seat?.width ?? 0),
-      );
-      const y = clamp(
-        Math.round((position.y + dy) / step) * step,
-        1 - (seat?.height ?? 0),
-      );
-      return { ...position, x, y };
+      const [sx, sy] = snapPoint(position.x + dx, position.y + dy);
+      return {
+        ...position,
+        x: clamp(sx, 1 - (seat?.width ?? 0)),
+        y: clamp(sy, 1 - (seat?.height ?? 0)),
+      };
     });
     drag.after = after;
     updateLocalPositions(after);
@@ -465,6 +561,64 @@ export function SeatMapPage() {
       setMoving(false);
     }
   };
+  const applyGridToMap = (next: SeatGrid | null) =>
+    setMaps((current) =>
+      current.map((item) =>
+        item.id === mapId ? { ...item, grid: next } : item,
+      ),
+    );
+  const calibrateGrid = async () => {
+    const selection = seats.filter((seat) => selectedIds.has(seat.id));
+    const next = deriveGrid(selection);
+    if (!next) {
+      setError(
+        "격자를 계산할 수 없습니다. 가로·세로로 떨어진 좌석을 2개 이상 선택하세요",
+      );
+      return;
+    }
+    try {
+      const saved = await putJSON<SeatGrid>(
+        `/api/v1/floor-maps/${mapId}/grid`,
+        next,
+      );
+      const applied = saved ?? next;
+      applyGridToMap(applied);
+      setNotice(
+        `격자를 보정했습니다 · 가로 ${(applied.pitchX * 100).toFixed(1)}% · 세로 ${(applied.pitchY * 100).toFixed(1)}%`,
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "격자를 저장하지 못했습니다");
+    }
+  };
+  const clearGrid = async () => {
+    try {
+      await putJSON(`/api/v1/floor-maps/${mapId}/grid`, {});
+      applyGridToMap(null);
+      setNotice("격자 보정을 해제했습니다");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "격자를 해제하지 못했습니다");
+    }
+  };
+  const alignToGrid = async () => {
+    const ids = [...selectedIds];
+    try {
+      const result = await postJSON<{
+        aligned: number;
+        maxShift: number;
+        warning?: string;
+      }>(`/api/v1/floor-maps/${mapId}/seats/align`, { seatIds: ids });
+      setUndoStack([]);
+      setRedoStack([]);
+      await chooseMap(mapId);
+      const scope = ids.length ? "" : " (도면 전체)";
+      if (result.warning) setError(result.warning);
+      setNotice(
+        `${result.aligned}개 좌석을 격자에 정렬했습니다${scope} · 최대 이동 ${(result.maxShift * 100).toFixed(1)}%`,
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "좌석을 정렬하지 못했습니다");
+    }
+  };
   useEffect(() => {
     if (!editMode) return;
     const keyboard = (event: KeyboardEvent) => {
@@ -482,11 +636,12 @@ export function SeatMapPage() {
         return;
       }
       const distance = event.shiftKey ? 0.02 : 0.005;
+      const vertical = distance * aspect;
       const delta: Record<string, [number, number]> = {
         ArrowLeft: [-distance, 0],
         ArrowRight: [distance, 0],
-        ArrowUp: [0, -distance],
-        ArrowDown: [0, distance],
+        ArrowUp: [0, -vertical],
+        ArrowDown: [0, vertical],
       };
       if (delta[event.key]) {
         event.preventDefault();
@@ -519,6 +674,11 @@ export function SeatMapPage() {
       {error && (
         <Alert severity="error" onClose={() => setError("")}>
           {error}
+        </Alert>
+      )}
+      {notice && (
+        <Alert severity="success" onClose={() => setNotice("")}>
+          {notice}
         </Alert>
       )}
       <Box
@@ -782,13 +942,91 @@ export function SeatMapPage() {
                   boxShadow: 3,
                 }}
               >
-                <Chip
-                  size="small"
-                  icon={<GridOnRounded />}
-                  label={snapEnabled ? "5px 스냅" : "자유 이동"}
-                  onClick={() => setSnapEnabled((value) => !value)}
-                  sx={{ bgcolor: "rgba(255,255,255,.12)", color: "white" }}
-                />
+                <Tooltip
+                  title={
+                    grid
+                      ? `보정된 격자에 스냅 · 가로 ${(grid.pitchX * 100).toFixed(1)}% 세로 ${(grid.pitchY * 100).toFixed(1)}%`
+                      : "고정 간격에 스냅 · 도면 격자를 보정하면 실제 책상 간격을 따릅니다"
+                  }
+                >
+                  <Chip
+                    size="small"
+                    icon={<GridOnRounded />}
+                    label={
+                      snapEnabled
+                        ? grid
+                          ? "도면 격자"
+                          : "격자 스냅"
+                        : "자유 이동"
+                    }
+                    onClick={() => setSnapEnabled((value) => !value)}
+                    sx={{
+                      bgcolor: !snapEnabled
+                        ? "rgba(255,255,255,.12)"
+                        : grid
+                          ? "rgba(8,126,139,.4)"
+                          : "rgba(255,183,3,.22)",
+                      color: "white",
+                      fontWeight: 600,
+                      "& .MuiChip-icon": { color: "inherit" },
+                    }}
+                  />
+                </Tooltip>
+                <Tooltip
+                  title={
+                    selectedIds.size > 1
+                      ? "선택한 좌석의 간격으로 도면 격자를 보정합니다"
+                      : "가로·세로로 떨어진 좌석을 2개 이상 선택하세요"
+                  }
+                >
+                  <span>
+                    <IconButton
+                      size="small"
+                      disabled={selectedIds.size < 2 || moving}
+                      onClick={() => void calibrateGrid()}
+                      sx={{ color: "white" }}
+                      aria-label="선택 좌석으로 격자 보정"
+                    >
+                      <StraightenRounded />
+                    </IconButton>
+                  </span>
+                </Tooltip>
+                <Tooltip
+                  title={
+                    grid
+                      ? selectedIds.size
+                        ? `선택한 ${selectedIds.size}개 좌석을 격자에 정렬`
+                        : "도면 전체 좌석을 격자에 정렬"
+                      : "먼저 도면 격자를 보정하세요"
+                  }
+                >
+                  <span>
+                    <IconButton
+                      size="small"
+                      disabled={!grid || moving}
+                      onClick={() => void alignToGrid()}
+                      sx={{ color: "white" }}
+                      aria-label="격자에 정렬"
+                    >
+                      <AutoFixHighRounded />
+                    </IconButton>
+                  </span>
+                </Tooltip>
+                {grid && (
+                  <Tooltip title="격자 보정 해제">
+                    <span>
+                      <IconButton
+                        size="small"
+                        disabled={moving}
+                        onClick={() => void clearGrid()}
+                        sx={{ color: "white" }}
+                        aria-label="격자 보정 해제"
+                      >
+                        <GridOffRounded />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                )}
                 <Tooltip title="실행 취소 · Ctrl/⌘ Z">
                   <span>
                     <IconButton
@@ -834,7 +1072,9 @@ export function SeatMapPage() {
                 display: "flex",
                 gap: 0.5,
                 p: 0.5,
+                alignItems: "center",
                 bgcolor: "rgba(255,255,255,.92)",
+                backdropFilter: "blur(6px)",
                 borderRadius: 2,
                 boxShadow: 2,
               }}
@@ -847,7 +1087,7 @@ export function SeatMapPage() {
                   <ZoomOutRounded />
                 </IconButton>
               </Tooltip>
-              <Tooltip title="맞춤">
+              <Tooltip title="도면 너비에 맞춤">
                 <IconButton size="small" onClick={() => setZoom(1)}>
                   <CenterFocusStrongRounded />
                 </IconButton>
@@ -860,46 +1100,82 @@ export function SeatMapPage() {
                   <ZoomInRounded />
                 </IconButton>
               </Tooltip>
+              <Typography
+                variant="caption"
+                fontWeight={700}
+                sx={{
+                  px: 0.75,
+                  minWidth: 42,
+                  textAlign: "center",
+                  color: "text.secondary",
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {Math.round(zoom * 100)}%
+              </Typography>
             </Box>
+            {!currentMap.overlayReady && (
+              <Chip
+                size="small"
+                color="warning"
+                label={
+                  currentMap.contentType === "application/pdf"
+                    ? "PDF 미리보기 없음 · 오버레이를 표시할 수 없습니다"
+                    : "도면 크기 정보 없음 · 좌석 정렬이 어긋날 수 있습니다"
+                }
+                sx={{
+                  position: "absolute",
+                  top: 12,
+                  right: 12,
+                  zIndex: 2,
+                  fontWeight: 600,
+                }}
+              />
+            )}
             <Box
               sx={{
                 width: "100%",
                 height: "100%",
                 overflow: "auto",
-                display: "grid",
-                placeItems: "center",
-                p: 2,
+                p: 2.5,
               }}
             >
-              {currentMap.contentType === "application/pdf" ? (
+              {/* 오버레이 기준 래스터가 없을 때만 원본 뷰어로 물러난다. */}
+              {!currentMap.overlayReady ? (
                 <Box
                   sx={{ width: "100%", height: "100%", position: "relative" }}
                 >
                   <object
                     data={currentMap.contentUrl}
-                    type="application/pdf"
+                    type={currentMap.contentType}
                     width="100%"
                     height="100%"
-                    aria-label="PDF 도면"
+                    aria-label="원본 도면"
                   />
                   <Typography
                     variant="caption"
                     sx={{
                       position: "absolute",
-                      bottom: 8,
-                      left: 8,
-                      bgcolor: "white",
-                      px: 1,
+                      bottom: 10,
+                      left: 10,
+                      bgcolor: "rgba(255,255,255,.94)",
+                      border: "1px solid rgba(14,45,62,.1)",
+                      borderRadius: 1.5,
+                      boxShadow: 1,
+                      px: 1.25,
+                      py: 0.5,
                     }}
                   >
-                    PDF 도면의 좌석 오버레이는 이미지 변환 분석 후 표시됩니다.
+                    좌석 오버레이 기준 이미지를 준비하지 못했습니다. 도면을 다시
+                    업로드하거나 AI 분석을 실행해 주세요.
                   </Typography>
                 </Box>
               ) : (
                 <svg
-                  role="img"
+                  // 편집 모드에서는 좌석이 조작 대상이므로 단일 이미지로 묶지 않는다.
+                  role={editMode ? "group" : "img"}
                   aria-label={`${currentMap.floorName} 좌석 배치도`}
-                  viewBox="0 0 1000 700"
+                  viewBox={`0 0 ${canvas.width} ${canvas.height}`}
                   onDoubleClick={mapDoubleClick}
                   onPointerMove={moveSeats}
                   onPointerUp={finishSeatMove}
@@ -911,77 +1187,147 @@ export function SeatMapPage() {
                     }
                   }}
                   style={{
+                    display: "block",
+                    margin: "auto",
                     width: `${zoom * 100}%`,
-                    height: `${zoom * 100}%`,
-                    minWidth: 720,
-                    minHeight: 500,
+                    aspectRatio: `${canvas.width} / ${canvas.height}`,
+                    minWidth: 320,
                     background: "#fff",
-                    borderRadius: 12,
-                    boxShadow: "0 8px 24px rgba(14,45,62,.1)",
+                    borderRadius: 14,
+                    boxShadow: "0 10px 30px rgba(14,45,62,.14)",
+                    touchAction: editMode ? "none" : "auto",
                   }}
                 >
+                  <defs>
+                    {/* 보정된 격자가 있으면 그 간격과 원점을 그대로 그린다. */}
+                    <pattern
+                      id="seat-snap-grid"
+                      x={grid ? grid.originX * canvas.width : 0}
+                      y={grid ? grid.originY * canvas.height : 0}
+                      width={(grid ? grid.pitchX : 0.05) * canvas.width}
+                      height={
+                        grid ? grid.pitchY * canvas.height : 0.05 * canvas.width
+                      }
+                      patternUnits="userSpaceOnUse"
+                    >
+                      <path
+                        d={`M ${(grid ? grid.pitchX : 0.05) * canvas.width} 0 L 0 0 0 ${grid ? grid.pitchY * canvas.height : 0.05 * canvas.width}`}
+                        fill="none"
+                        stroke={grid ? "#087E8B" : "#0E2D3E"}
+                        strokeWidth={grid ? 1.4 : 1}
+                        opacity={grid ? 0.34 : 0.16}
+                      />
+                    </pattern>
+                  </defs>
                   <image
-                    href={currentMap.contentUrl}
+                    href={currentMap.previewUrl}
                     x="0"
                     y="0"
-                    width="1000"
-                    height="700"
-                    preserveAspectRatio="xMidYMid meet"
-                    opacity=".9"
+                    width={canvas.width}
+                    height={canvas.height}
+                    preserveAspectRatio="none"
+                    opacity=".92"
                   />
-                  {seats.map((seat) => (
-                    <g
-                      key={seat.id}
-                      transform={`rotate(${seat.rotation} ${seat.x * 1000 + seat.width * 500} ${seat.y * 700 + seat.height * 350})`}
-                      onPointerDown={(event) => beginSeatMove(event, seat)}
-                      onClick={() => {
-                        if (!editMode) setSelected(seat);
-                      }}
-                      onDoubleClick={(event) => {
-                        event.stopPropagation();
-                        if (manager && editMode) setEditor(seat);
-                      }}
-                      onDragOver={(e) => manager && e.preventDefault()}
-                      onDrop={(e) => void drop(e, seat)}
-                      style={{
-                        cursor: editMode ? "move" : "pointer",
-                        touchAction: editMode ? "none" : "auto",
-                      }}
-                    >
-                      <rect
-                        x={seat.x * 1000}
-                        y={seat.y * 700}
-                        width={seat.width * 1000}
-                        height={seat.height * 700}
-                        rx="6"
-                        fill={seatColor(seat)}
-                        stroke={
-                          selectedIds.has(seat.id) || selected?.id === seat.id
-                            ? "#FFB703"
-                            : seat.confidence && seat.confidence < 0.95
-                              ? "#E79418"
-                              : "#263E4D"
-                        }
-                        strokeWidth={
-                          selectedIds.has(seat.id) || selected?.id === seat.id
-                            ? 5
-                            : 2
-                        }
-                      />
-                      <text
-                        x={(seat.x + seat.width / 2) * 1000}
-                        y={(seat.y + seat.height / 2) * 700}
-                        textAnchor="middle"
-                        dominantBaseline="middle"
-                        fontSize="11"
-                        fontWeight="700"
-                        fill={seat.employeeId ? "white" : "#203846"}
-                        style={{ pointerEvents: "none" }}
+                  {editMode && snapEnabled && (
+                    <rect
+                      width={canvas.width}
+                      height={canvas.height}
+                      fill="url(#seat-snap-grid)"
+                      style={{ pointerEvents: "none" }}
+                    />
+                  )}
+                  {seats.map((seat) => {
+                    const left = seat.x * canvas.width,
+                      top = seat.y * canvas.height,
+                      width = seat.width * canvas.width,
+                      height = seat.height * canvas.height;
+                    const active =
+                      selectedIds.has(seat.id) || selected?.id === seat.id;
+                    const needsReview = Boolean(
+                      seat.confidence && seat.confidence < 0.95,
+                    );
+                    const label = seat.employeeName || seat.seatNo;
+                    const fontSize = Math.min(
+                      13,
+                      Math.max(7.5, height * 0.34, width * 0.16),
+                    );
+                    const maxChars = Math.floor(width / (fontSize * 0.62));
+                    const showLabel =
+                      width >= 20 && height >= 11 && maxChars >= 2;
+                    return (
+                      <g
+                        key={seat.id}
+                        transform={`rotate(${seat.rotation} ${left + width / 2} ${top + height / 2})`}
+                        onPointerDown={(event) => beginSeatMove(event, seat)}
+                        onClick={() => {
+                          if (!editMode) setSelected(seat);
+                        }}
+                        onDoubleClick={(event) => {
+                          event.stopPropagation();
+                          if (manager && editMode) setEditor(seat);
+                        }}
+                        onDragOver={(e) => manager && e.preventDefault()}
+                        onDrop={(e) => void drop(e, seat)}
+                        style={{
+                          cursor: editMode ? "move" : "pointer",
+                          touchAction: editMode ? "none" : "auto",
+                        }}
                       >
-                        {seat.employeeName || seat.seatNo}
-                      </text>
-                    </g>
-                  ))}
+                        {active && (
+                          <rect
+                            x={left - 4}
+                            y={top - 4}
+                            width={width + 8}
+                            height={height + 8}
+                            rx="9"
+                            fill="none"
+                            stroke="#FFB703"
+                            strokeWidth="2"
+                            opacity=".55"
+                          />
+                        )}
+                        <rect
+                          x={left}
+                          y={top}
+                          width={width}
+                          height={height}
+                          rx={Math.min(6, Math.min(width, height) * 0.22)}
+                          fill={seatColor(seat)}
+                          fillOpacity={seat.employeeId ? 0.95 : 0.85}
+                          stroke={
+                            active
+                              ? "#FFB703"
+                              : needsReview
+                                ? "#E79418"
+                                : "#263E4D"
+                          }
+                          strokeWidth={active ? 3 : needsReview ? 2 : 1.4}
+                          strokeDasharray={
+                            needsReview && !active ? "5 3" : undefined
+                          }
+                        />
+                        {showLabel && (
+                          <text
+                            x={left + width / 2}
+                            y={top + height / 2}
+                            textAnchor="middle"
+                            dominantBaseline="central"
+                            fontSize={fontSize}
+                            fontWeight="700"
+                            fill={seat.employeeId ? "white" : "#203846"}
+                            style={{ pointerEvents: "none" }}
+                          >
+                            {label.length > maxChars
+                              ? `${label.slice(0, Math.max(1, maxChars - 1))}…`
+                              : label}
+                          </text>
+                        )}
+                        <title>
+                          {`${seat.seatNo}${seat.employeeName ? ` · ${seat.employeeName}` : " · 빈 좌석"}${needsReview ? " · 검토 필요" : ""}`}
+                        </title>
+                      </g>
+                    );
+                  })}
                 </svg>
               )}
             </Box>
@@ -991,34 +1337,46 @@ export function SeatMapPage() {
                 right: 12,
                 bottom: 12,
                 display: "flex",
-                gap: 0.75,
-                bgcolor: "rgba(255,255,255,.92)",
+                flexWrap: "wrap",
+                columnGap: 1.25,
+                rowGap: 0.5,
+                maxWidth: "calc(100% - 24px)",
+                bgcolor: "rgba(255,255,255,.94)",
+                backdropFilter: "blur(6px)",
+                border: "1px solid rgba(14,45,62,.1)",
                 borderRadius: 2,
-                p: 1,
+                boxShadow: 1,
+                px: 1.25,
+                py: 0.85,
               }}
             >
               {[
-                ["#087E8B", "배정"],
-                ["#FFF", "빈 좌석"],
-                ["#3478C8", "공용"],
-                ["#8796A1", "사용불가"],
-              ].map(([color, label]) => (
+                { color: "#087E8B", label: "배정", dashed: false },
+                { color: "#FFFFFF", label: "빈 좌석", dashed: false },
+                { color: "#3478C8", label: "공용", dashed: false },
+                { color: "#8796A1", label: "사용불가", dashed: false },
+                { color: "#FFFFFF", label: "검토 필요", dashed: true },
+              ].map(({ color, label, dashed }) => (
                 <Stack
                   key={label}
                   direction="row"
-                  spacing={0.5}
+                  spacing={0.6}
                   alignItems="center"
                 >
                   <Box
                     sx={{
-                      width: 10,
-                      height: 10,
+                      width: 11,
+                      height: 11,
                       borderRadius: 0.5,
                       bgcolor: color,
-                      border: "1px solid #8796A1",
+                      border: dashed
+                        ? "1.5px dashed #E79418"
+                        : "1px solid #8796A1",
                     }}
                   />
-                  <Typography variant="caption">{label}</Typography>
+                  <Typography variant="caption" sx={{ whiteSpace: "nowrap" }}>
+                    {label}
+                  </Typography>
                 </Stack>
               ))}
             </Box>

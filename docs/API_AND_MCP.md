@@ -27,7 +27,12 @@ OpenAPI 3.1 문서는 실행 중인 SeatOn의 `/api/v1/openapi.json`에서 확�
 - `PATCH /api/v1/seats/bulk` 다중 좌석 위치·회전 일괄 저장
 - `POST /api/v1/seat-assignments` 좌석 배정
 - `POST /api/v1/seat-assignments/bulk` CSV/XLSX 일괄 배정
-- `POST /api/v1/floor-maps/{id}/analyze` 오프라인 도면 분석
+- `POST /api/v1/floor-maps/{id}/analyze?engine=cv|vlm|hybrid` 도면 분석 시작, `202`와 함께 `jobId` 반환. `engine`을 생략하면 `ai.engine` 설정값을 사용
+- `GET /api/v1/analysis-jobs/{jobId}` 분석 진행 상태, 결과 건수, 경고 목록 조회
+- `POST /api/v1/settings/ai/vlm/test` 사내 VLM 엔드포인트 연결·응답 형식 시험
+- `GET /api/v1/floor-maps/{id}/preview` 좌석 오버레이 기준 래스터 이미지, PDF는 첫 페이지를 PNG로 변환해 제공
+- `PUT /api/v1/floor-maps/{id}/grid` 도면 좌석 격자 보정값 저장, 빈 본문 `{}`은 해제
+- `POST /api/v1/floor-maps/{id}/seats/align` 좌석을 도면 격자에 정렬, `seatIds` 생략 시 도면 전체
 - `GET /api/v1/seat-history` 변경 이력
 - `GET /api/v1/dashboard` 운영 준비도와 처리 필요 건수
 - `GET /api/v1/dashboard/issues?kind=` 처리 필요 상세 작업 큐

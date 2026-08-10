@@ -128,7 +128,7 @@ func (s *Server) executeMCPTool(r *http.Request, name string, args map[string]an
 			_ = rows.Scan(&id, &no, &typ, &status, &x, &y, &ww, &hh, &employee)
 			items = append(items, map[string]any{"id": id, "seatNo": no, "type": typ, "status": status, "x": x, "y": y, "width": ww, "height": hh, "employee": employee})
 		}
-		return map[string]any{"id": mapID, "version": version, "building": building, "floor": floor, "contentUrl": "/api/v1/floor-maps/" + mapID + "/content", "seats": items}, nil
+		return map[string]any{"id": mapID, "version": version, "building": building, "floor": floor, "contentUrl": "/api/v1/floor-maps/" + mapID + "/content", "previewUrl": "/api/v1/floor-maps/" + mapID + "/preview", "seats": items}, nil
 	case "get_action_items":
 		u, _ := userFrom(r)
 		if !u.CanManageSeats() {

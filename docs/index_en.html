@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SeatOn - Offline-First Smart Seat & Office Layout Platform | Single Docker Container</title>
-    <meta name="description" content="SeatOn is an enterprise-ready, air-gapped smart seat & office layout platform combining offline CV floorplan candidate detection, SVG relative coordinate seat map, anomaly seat detection, Keycloak OIDC, and Streamable MCP into a single Docker image.">
-    <meta name="keywords" content="smart seat, office layout, offline CV detection, SVG seatmap, Keycloak OIDC, Analytics MCP, SeatOn">
+    <meta name="description" content="SeatOn is an enterprise-ready, air-gapped smart seat & office layout platform combining selectable floorplan seat detection (offline CV or an on-premise vision model), SVG relative coordinate seat map, anomaly seat detection, Keycloak OIDC, and Streamable MCP into a single Docker image.">
+    <meta name="keywords" content="smart seat, office layout, offline CV detection, vision model seat detection, seat grid calibration, SVG seatmap, Keycloak OIDC, Analytics MCP, SeatOn">
     <meta name="author" content="SeatOn">
     <meta name="robots" content="index, follow">
 
@@ -15,7 +15,7 @@
 
     <!-- Open Graph -->
     <meta property="og:title" content="SeatOn - Offline-First Smart Seat & Office Layout Platform">
-    <meta property="og:description" content="Offline CV floorplan detection, SVG relative coordinate seatmap, anomaly seat detection in a single Docker container.">
+    <meta property="og:description" content="Offline CV and on-premise vision model floorplan detection, SVG relative coordinate seatmap, anomaly seat detection in a single Docker container.">
     <meta property="og:url" content="https://hkjang.github.io/seaton/index_en.html">
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="SeatOn">
@@ -24,7 +24,7 @@
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="SeatOn - Offline-First Smart Seat & Office Layout Platform">
-    <meta name="twitter:description" content="Single Docker image for enterprise air-gapped smart seatmap, CV floorplan detection, and Streamable MCP.">
+    <meta name="twitter:description" content="Single Docker image for enterprise air-gapped smart seatmap, selectable CV / vision model floorplan detection, and Streamable MCP.">
 
     <!-- Canonical & Alternate -->
     <link rel="canonical" href="https://hkjang.github.io/seaton/index_en.html">
@@ -57,12 +57,14 @@
         "priceCurrency": "USD"
       },
       "featureList": [
-        "PNG/JPG/PDF Floorplan Versioning & Offline CV Seat Candidate Detection",
+        "PNG/JPG/PDF Floorplan Versioning & Automatic Seat Detection (seat overlay on PDF too)",
+        "Selectable detection engine: offline CV, on-premise vision model (VLM), or cross-validated hybrid",
+        "Per-floorplan seat grid calibration and bulk alignment matching real desk pitch",
         "Relative Coordinate SVG Editor with Drag & Drop Assignment and Zoom",
         "Automated Detection of Unassigned, Retired User Occupied, & Anomaly Seats",
         "Keycloak OIDC PKCE SSO & Non-deletable Break Glass Bootstrap Admin",
         "HMAC Digest Key Management with Zero-Downtime Grace Period Rotation",
-        "Streamable HTTP MCP Server Adapter with 8+ ACL-aware Tools",
+        "Streamable HTTP MCP Server Adapter with 5 ACL-aware Tools",
         "Single Non-Root Air-Gapped Docker Image Delivery"
       ]
     }
@@ -79,7 +81,7 @@
             </a>
             <ul class="nav-links desktop-only">
                 <li><a href="#features">Features</a></li>
-                <li><a href="#seatmap">SeatMap & CV</a></li>
+                <li><a href="#seatmap">SeatMap & Detection</a></li>
                 <li><a href="#mcp">API & MCP</a></li>
                 <li><a href="#docs">Docs</a></li>
                 <li><a href="#faq">FAQ</a></li>
@@ -107,7 +109,7 @@
     <div class="mobile-menu" id="mobile-menu">
         <div class="mobile-nav-links">
             <a href="#features">Features</a>
-            <a href="#seatmap">SeatMap & CV</a>
+            <a href="#seatmap">SeatMap & Detection</a>
             <a href="#mcp">API & MCP</a>
             <a href="#docs">Docs</a>
             <a href="#faq">FAQ</a>
@@ -129,10 +131,10 @@
                     Next-Gen On-Premise<br>
                     <span class="text-gradient">Smart Seat & Office Layout</span>
                 </h1>
-                <p class="hero-subtitle">Connect office floorplans and employee info with SVG coordinates and offline CV</p>
+                <p class="hero-subtitle">Connect office floorplans and employee info with exact SVG coordinates and selectable seat detection</p>
                 <p class="hero-description">
                     SeatOn is an enterprise smart space management platform built for isolated corporate networks. 
-                    Manage offline CV floorplan candidate detection, relative coordinate SVG seat maps, 
+                    Manage automatic floorplan seat detection, relative coordinate SVG seat maps, 
                     anomaly seat detection, Keycloak OIDC SSO, and Streamable HTTP MCP in a single Docker container.
                 </p>
                 <div class="hero-ctas">
@@ -156,7 +158,7 @@
                 </div>
                 <div class="stat-item">
                     <span class="stat-icon">👁️</span>
-                    <span>Offline CV Floorplan Detection</span>
+                    <span>CV / Vision Model Detection</span>
                 </div>
                 <div class="stat-item">
                     <span class="stat-icon">⚠️</span>
@@ -177,8 +179,8 @@
                 <div class="feature-grid">
                     <article class="feature-card glass-panel">
                         <div class="feature-icon">👁️</div>
-                        <h3 class="feature-title">Offline CV Seat Detection</h3>
-                        <p class="feature-desc">Offline Computer Vision engine automatically detects seat rectangle candidates from uploaded PNG, JPG, or PDF blueprints.</p>
+                        <h3 class="feature-title">Selectable Seat Detection</h3>
+                        <p class="feature-desc">The offline CV engine strips walls and dimension lines and recovers the repeating desk lattice to produce seat candidates from PNG, JPG, or PDF blueprints. You can switch to cross-validating the result with an on-premise vision model such as Qwen2.5-VL.</p>
                     </article>
                     <article class="feature-card glass-panel">
                         <div class="feature-icon">🗺️</div>
@@ -228,7 +230,7 @@
 
                     <div class="glass-panel">
                         <h3>📘 User Guide</h3>
-                        <p style="color: var(--text-muted); margin: 8px 0 16px; font-size: 0.9rem;">SVG seatmap search, Drag & Drop assignment, CV floorplan parsing, Personal Key, and MCP usage manual.</p>
+                        <p style="color: var(--text-muted); margin: 8px 0 16px; font-size: 0.9rem;">SVG seatmap search, Drag & Drop assignment, floorplan detection and grid calibration, Personal Key, and MCP usage manual.</p>
                         <div style="display: flex; gap: 8px; flex-wrap: wrap;">
                             <a href="USER_GUIDE.pdf" target="_blank" class="btn btn-primary" style="padding: 6px 14px; font-size: 0.82rem;">📄 Download PDF</a>
                             <a href="USER_GUIDE.html" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">🌐 HTML View</a>
@@ -308,7 +310,7 @@ BOOTSTRAP_ADMIN_PASSWORD=SuperSecretPassword123!</code></pre>
                             <span class="faq-icon">+</span>
                         </button>
                         <div class="faq-answer">
-                            <p>Yes! Built-in SVG relative coordinate engine and offline CV parser allow SeatOn to operate 100% offline without any external internet or map SDK dependencies.</p>
+                            <p>Yes! Built-in SVG relative coordinate engine and offline CV parser allow SeatOn to operate 100% offline without any external internet or map SDK dependencies. Vision model detection is optional and only calls the on-premise inference endpoint you configure.</p>
                         </div>
                     </div>
                     <div class="faq-item">
@@ -317,7 +319,7 @@ BOOTSTRAP_ADMIN_PASSWORD=SuperSecretPassword123!</code></pre>
                             <span class="faq-icon">+</span>
                         </button>
                         <div class="faq-answer">
-                            <p>Yes! The built-in offline Computer Vision (CV) parser detects rectangular seat candidates from uploaded blueprints, allowing managers to generate layout maps in seconds.</p>
+                            <p>Yes! The built-in offline CV parser detects seat candidates from uploaded blueprints and recovers the desk lattice to score confidence, so only low-confidence seats land in the review queue. Adding an on-premise vision model cross-checks the result and shrinks that queue further.</p>
                         </div>
                     </div>
                     <div class="faq-item">

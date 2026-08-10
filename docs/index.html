@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SeatOn - 오프라인 우선 스마트 좌석 & 오피스 레이아웃 관리 플랫폼 | 단일 Docker</title>
     <meta name="description" content="SeatOn은 도면 CV 좌석 후보 분석, SVG 비율좌표 좌석맵, 이상 좌석 자동 감지, Keycloak OIDC SSO 및 Streamable MCP를 단일 Docker 이미지로 제공하는 스마트 좌석 및 공간 관리 서비스입니다.">
-    <meta name="keywords" content="스마트 좌석, 좌석 관리, 오피스 레이아웃, 오프라인 CV 도면 분석, SVG 좌석맵, Keycloak OIDC, MCP, SeatOn">
+    <meta name="keywords" content="스마트 좌석, 좌석 관리, 오피스 레이아웃, 오프라인 CV 도면 분석, 비전 모델 좌석 판독, 도면 격자 보정, SVG 좌석맵, Keycloak OIDC, MCP, SeatOn">
     <meta name="author" content="SeatOn">
     <meta name="robots" content="index, follow">
 
@@ -24,7 +24,7 @@
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="SeatOn - 오프라인 우선 스마트 좌석 & 오피스 레이아웃 관리 플랫폼">
-    <meta name="twitter:description" content="단일 Docker 이미지 기반 사내 오프라인 스마트 좌석맵. CV 도면 파싱 & Streamable MCP 내장.">
+    <meta name="twitter:description" content="단일 Docker 이미지 기반 사내 오프라인 스마트 좌석맵. CV·비전 모델 선택형 도면 판독 & Streamable MCP 내장.">
 
     <!-- Canonical & Alternate -->
     <link rel="canonical" href="https://hkjang.github.io/seaton/">
@@ -57,12 +57,14 @@
         "priceCurrency": "USD"
       },
       "featureList": [
-        "PNG/JPG/PDF 도면 버전 관리 및 오프라인 CV 좌석 후보 자동 탐지",
+        "PNG/JPG/PDF 도면 버전 관리 및 좌석 후보 자동 판독 (PDF도 좌석 오버레이 지원)",
+        "좌석 판독 엔진 선택: 오프라인 CV · 사내 비전 모델(VLM) · 두 결과 교차 검증 하이브리드",
+        "도면별 좌석 격자 보정과 일괄 정렬로 실제 책상 열 간격에 맞춘 스냅",
         "비율 좌표 SVG 편집 기반 Drag & Drop 좌석 배정 및 선택/줌",
         "미배정·퇴직자 점유·조직 영역 불일치·저신뢰 좌석 자동 탐지",
         "Keycloak OIDC PKCE SSO 및 Break Glass 부트스트랩 계정",
         "HMAC Digest 기반 Personal Key 관리 및 7일 유예기간 회전",
-        "Streamable HTTP MCP Server 탑재 (8+ ACL-aware Tools)",
+        "Streamable HTTP MCP Server 탑재 (5개 ACL-aware Tools)",
         "단일 non-root Docker 이미지 및 오프라인 air-gapped 번들"
       ]
     }
@@ -79,7 +81,7 @@
           "name": "SeatOn은 외부 지도 SDK나 인터넷 연결 없이 작동합니까?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "네. SeatOn은 외부 지도 SDK 대신 자체 SVG 비율 좌표 렌더링 엔진과 오프라인 CV 파서를 사용하며, 외부 CDN이나 폰트 다운로드 없이 단일 Docker 이미지로 100% 에어갭 오프라인 구동합니다."
+            "text": "네. SeatOn은 외부 지도 SDK 대신 자체 SVG 비율 좌표 렌더링 엔진과 오프라인 CV 파서를 사용하며, 외부 CDN이나 폰트 다운로드 없이 단일 Docker 이미지로 100% 에어갭 오프라인 구동합니다. 좌석 판독을 비전 모델로 바꾸더라도 관리자가 지정한 사내 추론 서버만 호출하므로 도면이 사외로 나가지 않습니다."
           }
         },
         {
@@ -87,7 +89,7 @@
           "name": "도면 이미지(PNG/PDF)에서 좌석 위치를 자동으로 찾아주나요?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "네. 내장된 오프라인 Computer Vision(CV) 파서가 업로드된 도면 이미지에서 좌석 사각형 후보를 자동 검출하여 관리자가 쉽게 드래그 앤 드롭으로 배정할 수 있도록 지원합니다."
+            "text": "네. 내장된 오프라인 Computer Vision(CV) 파서가 도면에서 좌석 후보를 자동 검출하고, 책상 배치의 반복 격자까지 복원해 신뢰도를 매깁니다. 사내 비전 모델을 함께 사용하면 두 결과를 교차 검증해 검토가 필요한 좌석만 남길 수 있습니다."
           }
         },
         {
@@ -113,7 +115,7 @@
             </a>
             <ul class="nav-links desktop-only">
                 <li><a href="#features">주요 기능</a></li>
-                <li><a href="#seatmap">좌석맵 & CV</a></li>
+                <li><a href="#seatmap">좌석맵 & 판독</a></li>
                 <li><a href="#mcp">API & MCP</a></li>
                 <li><a href="#docs">문서 센터</a></li>
                 <li><a href="#faq">FAQ</a></li>
@@ -141,7 +143,7 @@
     <div class="mobile-menu" id="mobile-menu">
         <div class="mobile-nav-links">
             <a href="#features">주요 기능</a>
-            <a href="#seatmap">좌석맵 & CV</a>
+            <a href="#seatmap">좌석맵 & 판독</a>
             <a href="#mcp">API & MCP</a>
             <a href="#docs">문서 센터</a>
             <a href="#faq">FAQ</a>
@@ -163,9 +165,9 @@
                     차세대 온프레미스<br>
                     <span class="text-gradient">스마트 좌석 & 오피스 관리</span>
                 </h1>
-                <p class="hero-subtitle">사무실 도면과 직원 정보를 비율좌표 SVG와 오프라인 CV로 완벽 연결</p>
+                <p class="hero-subtitle">사무실 도면과 직원 정보를 비율좌표 SVG와 선택형 좌석 판독 엔진으로 정확히 연결</p>
                 <p class="hero-description">
-                    SeatOn은 인터넷이 차단된 사내 폐쇄망 인프라에서 도면 오프라인 CV 탐지, 비율 좌표 SVG 좌석 편집기, 
+                    SeatOn은 인터넷이 차단된 사내 폐쇄망 인프라에서 도면 좌석 자동 판독, 비율 좌표 SVG 좌석 편집기, 
                     이상 좌석 자동 검출, Keycloak OIDC SSO 및 AI 에이전트를 위한 Streamable HTTP MCP를 
                     단일 Docker 컨테이너로 제공하는 스마트 공간 관리 플랫폼입니다.
                 </p>
@@ -190,7 +192,7 @@
                 </div>
                 <div class="stat-item">
                     <span class="stat-icon">👁️</span>
-                    <span>오프라인 CV 도면 분석</span>
+                    <span>CV · 비전 모델 선택형 판독</span>
                 </div>
                 <div class="stat-item">
                     <span class="stat-icon">⚠️</span>
@@ -212,7 +214,7 @@
                     <article class="feature-card glass-panel">
                         <div class="feature-icon">👁️</div>
                         <h3 class="feature-title">도면 CV 좌석 자동 분석</h3>
-                        <p class="feature-desc">PNG, JPG, PDF 건축 도면 업로드 시 오프라인 Computer Vision(CV) 엔진이 좌석 사각형 후보군을 자동 감지합니다.</p>
+                        <p class="feature-desc">PNG, JPG, PDF 건축 도면 업로드 시 오프라인 CV 엔진이 벽·치수선을 걸러내고 책상 배치의 반복 격자까지 복원해 좌석 후보를 만듭니다. 사내 비전 모델(Qwen2.5-VL 등)로 교차 검증하도록 전환할 수도 있습니다.</p>
                     </article>
                     <article class="feature-card glass-panel">
                         <div class="feature-icon">🗺️</div>
@@ -354,7 +356,7 @@
 
                     <div class="glass-panel">
                         <h3>📘 사용자 가이드 (User Guide)</h3>
-                        <p style="color: var(--text-muted); margin: 8px 0 16px; font-size: 0.9rem;">SVG 좌석맵 검색, Drag&Drop 배정, CV 도면 파싱, Personal Key 및 MCP 사용법</p>
+                        <p style="color: var(--text-muted); margin: 8px 0 16px; font-size: 0.9rem;">SVG 좌석맵 검색, Drag&Drop 배정, 도면 판독과 격자 보정, Personal Key 및 MCP 사용법</p>
                         <div style="display: flex; gap: 8px; flex-wrap: wrap;">
                             <a href="USER_GUIDE.pdf" target="_blank" class="btn btn-primary" style="padding: 6px 14px; font-size: 0.82rem;">📄 PDF 다운로드</a>
                             <a href="USER_GUIDE.html" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">🌐 HTML 뷰어</a>
@@ -434,7 +436,7 @@ BOOTSTRAP_ADMIN_PASSWORD=SuperSecretPassword123!</code></pre>
                             <span class="faq-icon">+</span>
                         </button>
                         <div class="faq-answer">
-                            <p>네. 외부 지도 SDK 대신 자체 개발된 SVG 비율 좌표 엔진과 오프라인 CV 도면 파서를 사용하여 인터넷 연결 없이 100% 오프라인 독립 구동합니다.</p>
+                            <p>네. 외부 지도 SDK 대신 자체 개발된 SVG 비율 좌표 엔진과 오프라인 CV 도면 파서를 사용하여 인터넷 연결 없이 100% 오프라인 독립 구동합니다. 비전 모델 판독은 선택 기능이며, 사내 추론 서버 주소만 지정할 수 있습니다.</p>
                         </div>
                     </div>
                     <div class="faq-item">
@@ -443,7 +445,7 @@ BOOTSTRAP_ADMIN_PASSWORD=SuperSecretPassword123!</code></pre>
                             <span class="faq-icon">+</span>
                         </button>
                         <div class="faq-answer">
-                            <p>네. 내장된 오프라인 Computer Vision(CV) 파서가 건축 도면에서 좌석 사각형 후보군을 자동 감지하여 클릭 한 번으로 배정 레이아웃을 생성할 수 있습니다.</p>
+                            <p>네. 내장된 오프라인 CV 파서가 건축 도면에서 좌석 후보를 자동 감지하고 배치 격자를 복원합니다. 신뢰도가 낮은 좌석만 검토 목록에 남으며, 사내 비전 모델과 교차 검증하면 검토 대상을 더 줄일 수 있습니다.</p>
                         </div>
                     </div>
                     <div class="faq-item">
