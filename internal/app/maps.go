@@ -105,7 +105,8 @@ func (s *Server) createFloor(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listFloorMaps(w http.ResponseWriter, r *http.Request) {
 	floorID := r.URL.Query().Get("floorId")
-	rows, err := s.db.Query(r.Context(), `SELECT m.id,m.floor_id,m.version,m.file_name,m.content_type,m.width,m.height,m.status,m.is_active,m.created_at,f.name,b.name,stats.seat_count,stats.review_count
+	// PDF는 래스터 미리보기의 픽셀 크기가 좌석 오버레이의 기준이 되므로 그것을 우선 노출한다.
+	rows, err := s.db.Query(r.Context(), `SELECT m.id,m.floor_id,m.version,m.file_name,m.content_type,COALESCE(m.preview_width,m.width),COALESCE(m.preview_height,m.height),m.status,m.is_active,m.created_at,f.name,b.name,stats.seat_count,stats.review_count,m.grid
 	FROM floor_maps m JOIN floors f ON f.id=m.floor_id JOIN buildings b ON b.id=f.building_id
 	LEFT JOIN LATERAL (SELECT COUNT(*) seat_count,COUNT(*) FILTER(WHERE confidence IS NOT NULL AND confidence < .95) review_count FROM seats s WHERE s.floor_map_id=m.id) stats ON true
 	WHERE ($1='' OR m.floor_id=$1) ORDER BY m.created_at DESC`, floorID)
@@ -121,8 +122,9 @@ func (s *Server) listFloorMaps(w http.ResponseWriter, r *http.Request) {
 		var active bool
 		var seatCount, reviewCount int
 		var created any
-		if rows.Scan(&id, &fid, &version, &name, &ct, &width, &height, &status, &active, &created, &fname, &bname, &seatCount, &reviewCount) == nil {
-			items = append(items, map[string]any{"id": id, "floorId": fid, "version": version, "fileName": name, "contentType": ct, "width": width, "height": height, "status": status, "active": active, "createdAt": created, "floorName": fname, "buildingName": bname, "seatCount": seatCount, "reviewCount": reviewCount, "contentUrl": "/api/v1/floor-maps/" + id + "/content"})
+		var gridRaw []byte
+		if rows.Scan(&id, &fid, &version, &name, &ct, &width, &height, &status, &active, &created, &fname, &bname, &seatCount, &reviewCount, &gridRaw) == nil {
+			items = append(items, map[string]any{"id": id, "floorId": fid, "version": version, "fileName": name, "contentType": ct, "width": width, "height": height, "status": status, "active": active, "createdAt": created, "floorName": fname, "buildingName": bname, "seatCount": seatCount, "reviewCount": reviewCount, "contentUrl": "/api/v1/floor-maps/" + id + "/content", "previewUrl": "/api/v1/floor-maps/" + id + "/preview", "overlayReady": width != nil && height != nil, "grid": parseSeatGrid(gridRaw)})
 		}
 	}
 	writeJSON(w, 200, map[string]any{"items": items})
@@ -160,14 +162,25 @@ func (s *Server) uploadFloorMap(w http.ResponseWriter, r *http.Request) {
 			height = &cfg.Height
 		}
 	}
+	// PDF는 업로드 시점에 한 번 래스터화해 좌석 오버레이 배경으로 재사용한다.
+	// 변환기가 없어도 업로드 자체는 성공시키고, 미리보기는 최초 요청 시 다시 시도한다.
+	var previewData []byte
+	var previewWidth, previewHeight *int
+	if ct == "application/pdf" {
+		if raster, pw, ph, e := rasterizePDF(r.Context(), data); e == nil {
+			previewData, previewWidth, previewHeight = raster, &pw, &ph
+		} else {
+			s.logger.Warn("도면 미리보기 생성 실패", "error", e)
+		}
+	}
 	id := newID()
 	u, _ := userFrom(r)
-	_, err = s.db.Exec(r.Context(), `INSERT INTO floor_maps(id,floor_id,version,file_name,content_type,file_data,width,height,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, id, floorID, version, safeFilename(header), ct, data, width, height, u.ID)
+	_, err = s.db.Exec(r.Context(), `INSERT INTO floor_maps(id,floor_id,version,file_name,content_type,file_data,width,height,preview_data,preview_width,preview_height,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, id, floorID, version, safeFilename(header), ct, data, width, height, previewData, previewWidth, previewHeight, u.ID)
 	if err != nil {
 		writeError(w, 409, "map_conflict", "동일한 층과 버전의 도면이 이미 있습니다")
 		return
 	}
-	s.audit(r.Context(), u.ID, "floor_map.upload", "floor_map", id, r.RemoteAddr, map[string]any{"file": header.Filename, "size": len(data)})
+	s.audit(r.Context(), u.ID, "floor_map.upload", "floor_map", id, r.RemoteAddr, map[string]any{"file": header.Filename, "size": len(data), "overlayReady": previewWidth != nil || width != nil})
 	writeJSON(w, 201, map[string]string{"id": id})
 }
 
@@ -189,6 +202,33 @@ func (s *Server) mapContent(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", `inline; filename="`+strings.ReplaceAll(name, `"`, "")+`"`)
 	w.Header().Set("Cache-Control", "private, max-age=300")
 	_, _ = w.Write(data)
+}
+
+// mapPreview는 좌석 오버레이의 배경으로 쓸 래스터 이미지를 돌려준다.
+// 이미지 도면은 원본을, PDF는 저장된 미리보기를 내보내고, 미리보기가 없으면
+// 이번 요청에서 한 번 만들어 저장한다(기존에 올라간 PDF 도면 보정용).
+func (s *Server) mapPreview(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "mapID")
+	var ct, name string
+	var preview []byte
+	err := s.db.QueryRow(r.Context(), `SELECT content_type,file_name,preview_data FROM floor_maps WHERE id=$1`, id).Scan(&ct, &name, &preview)
+	if err != nil {
+		notFoundOrServer(w, err)
+		return
+	}
+	if ct != "application/pdf" {
+		s.mapContent(w, r)
+		return
+	}
+	preview, err = s.ensurePreview(r.Context(), id, preview)
+	if err != nil {
+		writeError(w, 422, "preview_unavailable", "PDF 미리보기를 만들지 못했습니다")
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Content-Disposition", `inline; filename="`+strings.ReplaceAll(name, `"`, "")+`.png"`)
+	w.Header().Set("Cache-Control", "private, max-age=300")
+	_, _ = w.Write(preview)
 }
 
 func (s *Server) publishFloorMap(w http.ResponseWriter, r *http.Request) {

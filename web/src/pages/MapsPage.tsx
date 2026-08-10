@@ -7,6 +7,7 @@ import {
   CardActions,
   CardContent,
   Chip,
+  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
@@ -33,9 +34,12 @@ import ArrowForwardRounded from "@mui/icons-material/ArrowForwardRounded";
 import { useNavigate } from "react-router-dom";
 import { api, postJSON } from "../api";
 import { PageHeader } from "../components/AdminUI";
-import type { Building, Floor, FloorMap } from "../types";
+import type { AnalysisJob, Building, Floor, FloorMap } from "../types";
 
 type DialogName = "building" | "floor" | "upload" | "grid" | null;
+// 분석은 비동기 잡이다. VLM 경로는 수십 초가 걸릴 수 있어 완료까지 폴링한다.
+const JOB_POLL_INTERVAL = 1500;
+const JOB_POLL_LIMIT = 400;
 export function MapsPage() {
   const navigate = useNavigate();
   const [buildings, setBuildings] = useState<Building[]>([]),
@@ -44,6 +48,8 @@ export function MapsPage() {
     [dialog, setDialog] = useState<DialogName>(null),
     [selectedMap, setSelectedMap] = useState(""),
     [message, setMessage] = useState(""),
+    [warnings, setWarnings] = useState<string[]>([]),
+    [analyzing, setAnalyzing] = useState<Record<string, string>>({}),
     [error, setError] = useState("");
   const load = async () => {
     try {
@@ -71,6 +77,48 @@ export function MapsPage() {
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "요청에 실패했습니다");
+    }
+  };
+  // analyze는 202를 돌려주므로 잡이 끝날 때까지 상태를 확인한 뒤 결과를 보여준다.
+  const analyze = async (mapId: string) => {
+    setError("");
+    setWarnings([]);
+    try {
+      const queued = await postJSON<{ jobId: string; engine: string }>(
+        `/api/v1/floor-maps/${mapId}/analyze`,
+        {},
+      );
+      setAnalyzing((current) => ({ ...current, [mapId]: queued.engine }));
+      for (let attempt = 0; attempt < JOB_POLL_LIMIT; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, JOB_POLL_INTERVAL));
+        const job = await api<AnalysisJob>(
+          `/api/v1/analysis-jobs/${queued.jobId}`,
+        );
+        if (job.status === "completed") {
+          setMessage(
+            job.message || `좌석 후보 ${job.detected}개를 생성했습니다`,
+          );
+          setWarnings(job.warnings ?? []);
+          await load();
+          return;
+        }
+        if (job.status === "failed") {
+          setError(job.error || "도면 분석에 실패했습니다");
+          await load();
+          return;
+        }
+      }
+      setError(
+        "분석이 예상보다 오래 걸립니다. 잠시 후 도면 목록을 새로 고쳐 확인하세요",
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "분석을 시작하지 못했습니다");
+    } finally {
+      setAnalyzing((current) => {
+        const next = { ...current };
+        delete next[mapId];
+        return next;
+      });
     }
   };
   return (
@@ -115,6 +163,22 @@ export function MapsPage() {
       {error && (
         <Alert severity="error" onClose={() => setError("")} sx={{ mb: 2 }}>
           {error}
+        </Alert>
+      )}
+      {warnings.length > 0 && (
+        <Alert
+          severity="warning"
+          onClose={() => setWarnings([])}
+          sx={{ mb: 2 }}
+        >
+          <Typography variant="subtitle2" gutterBottom>
+            분석 중 확인이 필요한 사항
+          </Typography>
+          <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
+            {warnings.map((warning) => (
+              <li key={warning}>{warning}</li>
+            ))}
+          </Box>
         </Alert>
       )}
       <Paper sx={{ p: 2, mb: 2.5 }}>
@@ -272,16 +336,21 @@ export function MapsPage() {
                 <CardActions sx={{ px: 2, pb: 2, flexWrap: "wrap" }}>
                   <Button
                     size="small"
-                    startIcon={<AutoAwesomeRounded />}
-                    disabled={m.active}
-                    onClick={() =>
-                      void action(
-                        `/api/v1/floor-maps/${m.id}/analyze`,
-                        "AI 분석 완료",
+                    startIcon={
+                      analyzing[m.id] ? (
+                        <CircularProgress size={16} color="inherit" />
+                      ) : (
+                        <AutoAwesomeRounded />
                       )
                     }
+                    disabled={m.active || Boolean(analyzing[m.id])}
+                    onClick={() => void analyze(m.id)}
                   >
-                    AI 분석
+                    {analyzing[m.id]
+                      ? analyzing[m.id] === "cv"
+                        ? "CV 분석 중…"
+                        : "AI 판독 중…"
+                      : "AI 분석"}
                   </Button>
                   <Button
                     size="small"

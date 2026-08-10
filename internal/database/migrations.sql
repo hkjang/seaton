@@ -110,6 +110,13 @@ CREATE TABLE IF NOT EXISTS floor_maps (
   UNIQUE(floor_id, version)
 );
 
+-- PDF 도면도 좌석 오버레이를 그릴 수 있도록 래스터 미리보기와 그 픽셀 크기를 보관한다.
+ALTER TABLE floor_maps ADD COLUMN IF NOT EXISTS preview_data bytea;
+ALTER TABLE floor_maps ADD COLUMN IF NOT EXISTS preview_width integer;
+ALTER TABLE floor_maps ADD COLUMN IF NOT EXISTS preview_height integer;
+-- 도면별 좌석 격자 보정값: {"originX":..,"originY":..,"pitchX":..,"pitchY":..}
+ALTER TABLE floor_maps ADD COLUMN IF NOT EXISTS grid jsonb NOT NULL DEFAULT '{}';
+
 CREATE TABLE IF NOT EXISTS seats (
   id text PRIMARY KEY,
   floor_map_id text NOT NULL REFERENCES floor_maps(id) ON DELETE CASCADE,
@@ -172,6 +179,11 @@ CREATE TABLE IF NOT EXISTS analysis_jobs (
   completed_at timestamptz
 );
 
+-- 분석 엔진 진단 정보와 사용자에게 보여줄 경고를 함께 보관한다.
+ALTER TABLE analysis_jobs ADD COLUMN IF NOT EXISTS details jsonb NOT NULL DEFAULT '{}';
+ALTER TABLE analysis_jobs ADD COLUMN IF NOT EXISTS warnings text[] NOT NULL DEFAULT '{}';
+CREATE INDEX IF NOT EXISTS analysis_jobs_map_idx ON analysis_jobs(floor_map_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS api_keys (
   id text PRIMARY KEY,
   user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -229,6 +241,16 @@ INSERT INTO settings(key, value, secret) VALUES
  ('security.rotation_grace_hours', '24', false),
  ('ai.confidence_threshold', '0.80', false),
  ('ai.auto_approve_threshold', '0.95', false),
+ ('ai.engine', 'cv', false),
+ ('ai.vlm_base_url', '', false),
+ ('ai.vlm_model', 'qwen2.5-vl-7b-instruct', false),
+ ('ai.vlm_api_key', '', true),
+ ('ai.vlm_timeout_seconds', '120', false),
+ ('ai.vlm_max_image_side', '1600', false),
+ ('ai.vlm_max_seats', '400', false),
+ ('ai.vlm_tiles', '1', false),
+ ('ai.vlm_json_mode', 'true', false),
+ ('ai.fusion_iou', '0.35', false),
  ('hr.sync_enabled', 'false', false),
  ('hr.api_url', '', false),
  ('hr.api_token', '', true),

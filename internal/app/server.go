@@ -23,13 +23,14 @@ import (
 )
 
 type Server struct {
-	db      *pgxpool.Pool
-	keys    *platform.Keyring
-	logger  *slog.Logger
-	webFS   fs.FS
-	version string
-	commit  string
-	builtAt string
+	db       *pgxpool.Pool
+	keys     *platform.Keyring
+	logger   *slog.Logger
+	webFS    fs.FS
+	version  string
+	commit   string
+	builtAt  string
+	analyses runningAnalyses
 }
 
 func NewServer(db *pgxpool.Pool, keys *platform.Keyring, logger *slog.Logger, webFS fs.FS, version, commit, builtAt string) *Server {
@@ -59,6 +60,7 @@ func (s *Server) Routes() http.Handler {
 			r.Get("/floors", s.listFloors)
 			r.Get("/floor-maps", s.listFloorMaps)
 			r.Get("/floor-maps/{mapID}/content", s.mapContent)
+			r.Get("/floor-maps/{mapID}/preview", s.mapPreview)
 			r.Get("/seats", s.listSeats)
 			r.Get("/employees", s.listEmployees)
 			r.Get("/organizations", s.listOrganizations)
@@ -77,7 +79,10 @@ func (s *Server) Routes() http.Handler {
 				r.Post("/floors", s.createFloor)
 				r.Post("/floor-maps", s.uploadFloorMap)
 				r.Post("/floor-maps/{mapID}/analyze", s.analyzeFloorMap)
+				r.Get("/analysis-jobs/{jobID}", s.analysisJobStatus)
 				r.Post("/floor-maps/{mapID}/publish", s.publishFloorMap)
+				r.Put("/floor-maps/{mapID}/grid", s.updateFloorMapGrid)
+				r.Post("/floor-maps/{mapID}/seats/align", s.alignSeatsToGrid)
 				r.Post("/seats", s.createSeat)
 				r.Post("/seats/grid", s.createSeatGrid)
 				r.Patch("/seats/bulk", s.updateSeatsBulk)
@@ -96,6 +101,7 @@ func (s *Server) Routes() http.Handler {
 				r.Put("/settings", s.updateSettings)
 				r.Post("/settings/oidc/test", s.testOIDC)
 				r.Post("/settings/hr/sync", s.syncEmployeesNow)
+				r.Post("/settings/ai/vlm/test", s.testVLM)
 				r.Get("/users", s.listUsers)
 				r.Patch("/users/{userID}", s.updateUser)
 			})
