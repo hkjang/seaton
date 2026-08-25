@@ -68,6 +68,18 @@ import {
   zoomAround,
 } from "../lib/mapView";
 import { readableInk } from "../lib/color";
+import {
+  type ColorMode,
+  deriveGrid,
+  matchesFilter,
+  needsReviewSeat,
+  SEAT_FILTERS,
+  seatColor,
+  type SeatFilter,
+  seatHighlighted,
+  seatOrgId,
+  zoneMismatched,
+} from "../lib/seats";
 import { useAuth } from "../auth";
 import type {
   Building,
@@ -78,15 +90,6 @@ import type {
   Seat,
   SeatGrid,
 } from "../types";
-
-const seatColor = (seat: Seat) =>
-  seat.type === "unavailable" || seat.status === "unavailable"
-    ? "#8796A1"
-    : seat.employeeId
-      ? "#087E8B"
-      : seat.type === "shared"
-        ? "#3478C8"
-        : "#FFFFFF";
 
 type SeatPosition = Pick<Seat, "id" | "x" | "y" | "rotation">;
 type MoveOperation = { before: SeatPosition[]; after: SeatPosition[] };
@@ -108,42 +111,6 @@ type ActivePan = {
 };
 const fallbackCanvas = { width: 1000, height: 700 };
 
-// 좌석 색상 기준. 조직 모드는 어느 팀이 어디에 앉는지 한눈에 보여준다.
-type ColorMode = "status" | "organization";
-// 화면에서 강조할 좌석 갈래. 비어 있으면 전체를 동일하게 보여준다.
-type SeatFilter = "assigned" | "available" | "review" | "mismatch";
-const SEAT_FILTERS: { key: SeatFilter; label: string }[] = [
-  { key: "assigned", label: "배정" },
-  { key: "available", label: "빈 좌석" },
-  { key: "review", label: "검토 필요" },
-  { key: "mismatch", label: "구역 불일치" },
-];
-const needsReviewSeat = (seat: Seat) =>
-  Boolean(seat.confidence && seat.confidence < 0.95);
-// 좌석에 지정된 구역과 실제로 앉은 직원의 소속이 다른 경우다.
-const zoneMismatched = (seat: Seat) =>
-  Boolean(
-    seat.organizationId &&
-    seat.employeeOrganizationId &&
-    seat.organizationId !== seat.employeeOrganizationId,
-  );
-// 좌석을 대표하는 조직: 앉은 직원의 소속이 우선이고, 없으면 좌석에 지정된 구역.
-const seatOrgId = (seat: Seat) =>
-  seat.employeeOrganizationId ?? seat.organizationId ?? null;
-const matchesFilter = (seat: Seat, filters: Set<SeatFilter>) => {
-  if (!filters.size) return true;
-  if (filters.has("assigned") && seat.employeeId) return true;
-  if (
-    filters.has("available") &&
-    !seat.employeeId &&
-    seat.type !== "unavailable"
-  )
-    return true;
-  if (filters.has("review") && needsReviewSeat(seat)) return true;
-  if (filters.has("mismatch") && zoneMismatched(seat)) return true;
-  return false;
-};
-
 // 좌석은 도면 대비 비율 좌표로 저장되므로, viewBox를 도면 원본 비율과
 // 동일하게 잡아야 비율 좌표가 도면 픽셀에 1:1로 대응한다.
 const canvasFor = (map?: FloorMap) => {
@@ -159,45 +126,6 @@ const canvasFor = (map?: FloorMap) => {
 
 const clamp = (value: number, maximum: number) =>
   Math.max(0, Math.min(maximum, value));
-
-const MIN_GRID_PITCH = 0.004;
-
-// deriveGrid는 선택된 좌석들의 좌표에서 반복 간격을 읽어 격자 보정값을 만든다.
-// 관리자가 대표 좌석 몇 개만 골라주면 도면 전체 격자가 정해진다.
-const deriveGrid = (selection: Seat[]): SeatGrid | null => {
-  if (selection.length < 2) return null;
-  // 같은 값끼리 뭉친 뒤 이웃 간 최소 간격을 주기로 본다.
-  const spacing = (values: number[], fallbackSize: number) => {
-    const unique = [...new Set(values.map((v) => Math.round(v * 10000)))]
-      .map((v) => v / 10000)
-      .sort((a, b) => a - b);
-    const gaps = unique
-      .slice(1)
-      .map((v, i) => v - unique[i])
-      .filter((gap) => gap >= MIN_GRID_PITCH);
-    if (!gaps.length) return fallbackSize >= MIN_GRID_PITCH ? fallbackSize : 0;
-    return Math.min(...gaps);
-  };
-  const widths = selection.map((s) => s.width);
-  const heights = selection.map((s) => s.height);
-  const pitchX = spacing(
-    selection.map((s) => s.x),
-    Math.max(...widths),
-  );
-  const pitchY = spacing(
-    selection.map((s) => s.y),
-    Math.max(...heights),
-  );
-  if (pitchX < MIN_GRID_PITCH || pitchY < MIN_GRID_PITCH) return null;
-  const originX = Math.min(...selection.map((s) => s.x));
-  const originY = Math.min(...selection.map((s) => s.y));
-  return {
-    originX: originX % pitchX,
-    originY: originY % pitchY,
-    pitchX: Math.min(0.5, pitchX),
-    pitchY: Math.min(0.5, pitchY),
-  };
-};
 
 // 좌석 하나를 그리는 단위. 화면을 끌거나 확대할 때는 viewBox만 바뀌므로,
 // 좌석 속성이 그대로면 다시 그리지 않도록 memo로 감싼다. 500석 도면에서
@@ -609,11 +537,7 @@ export function SeatMapPage() {
   // 실제로 도드라지는 좌석 수. 필터와 조직 강조를 함께 반영해야 화면과 맞는다.
   const highlightedCount = useMemo(
     () =>
-      seats.filter(
-        (seat) =>
-          matchesFilter(seat, filters) &&
-          (activeOrg === null || seatOrgId(seat) === activeOrg),
-      ).length,
+      seats.filter((seat) => seatHighlighted(seat, filters, activeOrg)).length,
     [seats, filters, activeOrg],
   );
   const highlighting = filters.size > 0 || activeOrg !== null;
@@ -1016,10 +940,7 @@ export function SeatMapPage() {
           canvasHeight={canvas.height}
           active={selectedIds.has(seat.id) || selected?.id === seat.id}
           focused={selected?.id === seat.id}
-          dimmed={
-            !matchesFilter(seat, filters) ||
-            (activeOrg !== null && seatOrgId(seat) !== activeOrg)
-          }
+          dimmed={!seatHighlighted(seat, filters, activeOrg)}
           mismatch={zoneMismatched(seat)}
           needsReview={needsReviewSeat(seat)}
           fill={fillFor(seat)}
@@ -1058,12 +979,7 @@ export function SeatMapPage() {
           width={Math.max(3, seat.width * canvas.width)}
           height={Math.max(3, seat.height * canvas.height)}
           fill={fillFor(seat)}
-          opacity={
-            matchesFilter(seat, filters) &&
-            (activeOrg === null || seatOrgId(seat) === activeOrg)
-              ? 0.9
-              : 0.15
-          }
+          opacity={seatHighlighted(seat, filters, activeOrg) ? 0.9 : 0.15}
         />
       )),
     // eslint-disable-next-line react-hooks/exhaustive-deps
