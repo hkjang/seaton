@@ -371,6 +371,9 @@ export function SeatMapPage() {
   const panRef = useRef<ActivePan | null>(null);
   // 화면을 끌고 놓은 직후의 click은 좌석 선택으로 오해되므로 한 번 삼킨다.
   const suppressClickRef = useRef(false);
+  // 컨테이너 크기 측정 전에 들어온 이동 요청은 잡아 두었다가 측정 후 적용한다.
+  // URL의 ?q= 로 들어와 첫 렌더에서 검색이 실행되는 경우가 여기 해당한다.
+  const pendingFocusRef = useRef<Seat | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const lastSearchRef = useRef("");
@@ -485,7 +488,11 @@ export function SeatMapPage() {
   const moveCenter = (cx: number, cy: number) =>
     setView((current) => centerOn(current, cx, cy, viewport, canvas));
   // 좌석을 화면 중앙으로 가져오고 최소 배율까지 확대한다. 검색 결과 이동에 쓴다.
-  const focusSeat = (seat: Seat) =>
+  const focusSeat = (seat: Seat) => {
+    if (!viewport.width || !viewport.height) {
+      pendingFocusRef.current = seat;
+      return;
+    }
     setView((current) =>
       focusOn(
         current,
@@ -494,6 +501,20 @@ export function SeatMapPage() {
         canvas,
       ),
     );
+  };
+  useEffect(() => {
+    const seat = pendingFocusRef.current;
+    if (!seat || !viewport.width || !viewport.height) return;
+    pendingFocusRef.current = null;
+    setView((current) =>
+      focusOn(
+        current,
+        { x: seat.x, y: seat.y, width: seat.width, height: seat.height },
+        viewport,
+        canvas,
+      ),
+    );
+  }, [viewport, canvas]);
   const orgColor = useMemo(
     () => new Map(organizations.map((o) => [o.id, o.color])),
     [organizations],
@@ -963,6 +984,29 @@ export function SeatMapPage() {
       editMode,
       manager,
     ],
+  );
+  // 미니맵의 좌석 점도 화면 이동마다 다시 그릴 이유가 없다. 팬 중에는
+  // 현재 영역 사각형만 움직이면 되므로 좌석 목록을 따로 묶어 둔다.
+  const minimapSeats = useMemo(
+    () =>
+      seats.map((seat) => (
+        <rect
+          key={seat.id}
+          x={seat.x * canvas.width}
+          y={seat.y * canvas.height}
+          width={Math.max(3, seat.width * canvas.width)}
+          height={Math.max(3, seat.height * canvas.height)}
+          fill={fillFor(seat)}
+          opacity={
+            matchesFilter(seat, filters) &&
+            (activeOrg === null || seatOrgId(seat) === activeOrg)
+              ? 0.9
+              : 0.15
+          }
+        />
+      )),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [seats, canvas, filters, activeOrg, colorMode, orgColor],
   );
   // 미니맵의 한 점을 화면 중심으로 삼는다. 클릭과 드래그가 같은 경로를 쓴다.
   const moveViewToMinimap = (event: ReactPointerEvent<SVGSVGElement>) => {
@@ -1894,22 +1938,7 @@ export function SeatMapPage() {
                     if (event.buttons === 1) moveViewToMinimap(event);
                   }}
                 >
-                  {seats.map((seat) => (
-                    <rect
-                      key={seat.id}
-                      x={seat.x * canvas.width}
-                      y={seat.y * canvas.height}
-                      width={Math.max(3, seat.width * canvas.width)}
-                      height={Math.max(3, seat.height * canvas.height)}
-                      fill={fillFor(seat)}
-                      opacity={
-                        matchesFilter(seat, filters) &&
-                        (activeOrg === null || seatOrgId(seat) === activeOrg)
-                          ? 0.9
-                          : 0.15
-                      }
-                    />
-                  ))}
+                  {minimapSeats}
                   {/* 현재 화면 영역 */}
                   <rect
                     x={viewRect.x}
