@@ -1,4 +1,6 @@
 import {
+  memo,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -191,6 +193,139 @@ const deriveGrid = (selection: Seat[]): SeatGrid | null => {
   };
 };
 
+// 좌석 하나를 그리는 단위. 화면을 끌거나 확대할 때는 viewBox만 바뀌므로,
+// 좌석 속성이 그대로면 다시 그리지 않도록 memo로 감싼다. 500석 도면에서
+// 팬 한 프레임마다 전체를 리렌더하던 비용을 없애는 것이 목적이다.
+type SeatShapeProps = {
+  seat: Seat;
+  canvasWidth: number;
+  canvasHeight: number;
+  active: boolean;
+  focused: boolean;
+  dimmed: boolean;
+  mismatch: boolean;
+  needsReview: boolean;
+  fill: string;
+  darkLabel: boolean;
+  editMode: boolean;
+  manager: boolean;
+  onPointerDown: (event: ReactPointerEvent<SVGGElement>, seat: Seat) => void;
+  onSelect: (seat: Seat) => void;
+  onEdit: (seat: Seat) => void;
+  onDropEmployee: (event: DragEvent, seat: Seat) => void;
+};
+
+const SeatShape = memo(function SeatShape({
+  seat,
+  canvasWidth,
+  canvasHeight,
+  active,
+  focused,
+  dimmed,
+  mismatch,
+  needsReview,
+  fill,
+  darkLabel,
+  editMode,
+  manager,
+  onPointerDown,
+  onSelect,
+  onEdit,
+  onDropEmployee,
+}: SeatShapeProps) {
+  const left = seat.x * canvasWidth,
+    top = seat.y * canvasHeight,
+    width = seat.width * canvasWidth,
+    height = seat.height * canvasHeight;
+  const label = seat.employeeName || seat.seatNo;
+  const fontSize = Math.min(13, Math.max(7.5, height * 0.34, width * 0.16));
+  const maxChars = Math.floor(width / (fontSize * 0.62));
+  const showLabel = width >= 20 && height >= 11 && maxChars >= 2;
+  return (
+    <g
+      opacity={dimmed ? 0.14 : 1}
+      transform={`rotate(${seat.rotation} ${left + width / 2} ${top + height / 2})`}
+      onPointerDown={(event) => onPointerDown(event, seat)}
+      onClick={() => onSelect(seat)}
+      onDoubleClick={(event) => {
+        event.stopPropagation();
+        onEdit(seat);
+      }}
+      onDragOver={(event) => manager && event.preventDefault()}
+      onDrop={(event) => onDropEmployee(event, seat)}
+      style={{
+        cursor: editMode ? "move" : "pointer",
+        touchAction: editMode ? "none" : "auto",
+      }}
+    >
+      {active && (
+        <rect
+          x={left - 4}
+          y={top - 4}
+          width={width + 8}
+          height={height + 8}
+          rx="9"
+          fill="none"
+          stroke="#FFB703"
+          strokeWidth="2"
+          opacity=".55"
+        >
+          {/* 검색으로 찾아온 좌석 하나만 맥동시켜 눈이 바로 가게 한다. */}
+          {focused && (
+            <animate
+              attributeName="opacity"
+              values="0.9;0.2;0.9"
+              dur="1.4s"
+              repeatCount="6"
+            />
+          )}
+        </rect>
+      )}
+      <rect
+        x={left}
+        y={top}
+        width={width}
+        height={height}
+        rx={Math.min(6, Math.min(width, height) * 0.22)}
+        fill={fill}
+        fillOpacity={seat.employeeId ? 0.95 : 0.85}
+        stroke={
+          active
+            ? "#FFB703"
+            : mismatch
+              ? "#C1436D"
+              : needsReview
+                ? "#E79418"
+                : "#263E4D"
+        }
+        strokeWidth={active ? 3 : mismatch || needsReview ? 2 : 1.4}
+        strokeDasharray={
+          !active && (needsReview || mismatch) ? "5 3" : undefined
+        }
+      />
+      {showLabel && (
+        <text
+          x={left + width / 2}
+          y={top + height / 2}
+          textAnchor="middle"
+          dominantBaseline="central"
+          fontSize={fontSize}
+          fontWeight="700"
+          fill={darkLabel ? "#203846" : "white"}
+          style={{ pointerEvents: "none" }}
+        >
+          {label.length > maxChars
+            ? `${label.slice(0, Math.max(1, maxChars - 1))}…`
+            : label}
+        </text>
+      )}
+      <title>
+        {`${seat.seatNo}${seat.employeeName ? ` · ${seat.employeeName}` : " · 빈 좌석"}${seat.employeeOrganizationName ? ` · ${seat.employeeOrganizationName}` : ""}${needsReview ? " · 검토 필요" : ""}${mismatch ? ` · 구역 불일치(지정 ${seat.organizationName})` : ""}`}
+      </title>
+    </g>
+  );
+});
+
 export function SeatMapPage() {
   const { user } = useAuth(),
     navigate = useNavigate(),
@@ -341,18 +476,23 @@ export function SeatMapPage() {
       cy: halfY >= 0.5 ? 0.5 : Math.min(1 - halfY, Math.max(halfY, cy)),
     };
   };
-  const viewBox = useMemo(() => {
+  // 실제로 그려지는 화면 사각형. viewBox와 미니맵 표시가 같은 값을 쓴다.
+  const viewRect = useMemo(() => {
     const { cx, cy } = clampCenter(
       view.cx,
       view.cy,
       visible.width,
       visible.height,
     );
-    const x = cx * canvas.width - visible.width / 2;
-    const y = cy * canvas.height - visible.height / 2;
-    return `${x} ${y} ${visible.width} ${visible.height}`;
+    return {
+      x: cx * canvas.width - visible.width / 2,
+      y: cy * canvas.height - visible.height / 2,
+      width: visible.width,
+      height: visible.height,
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view.cx, view.cy, visible, canvas]);
+  const viewBox = `${viewRect.x} ${viewRect.y} ${viewRect.width} ${viewRect.height}`;
   // 컨테이너 크기를 추적해야 viewBox 종횡비를 맞출 수 있다.
   useEffect(() => {
     const node = stageRef.current;
@@ -794,6 +934,90 @@ export function SeatMapPage() {
     endPan(event);
     finishSeatMove(event);
   };
+  // memo된 좌석이 매 렌더 무효화되지 않도록 콜백을 고정한다. 바뀌는 값은
+  // ref로 읽어 콜백 신원(identity)을 유지한다.
+  const seatActionsRef = useRef({
+    beginSeatMove,
+    drop,
+    setEditor,
+    setSelected,
+    editMode,
+    manager,
+  });
+  seatActionsRef.current = {
+    beginSeatMove,
+    drop,
+    setEditor,
+    setSelected,
+    editMode,
+    manager,
+  };
+  const onSeatPointerDown = useCallback(
+    (event: ReactPointerEvent<SVGGElement>, seat: Seat) =>
+      seatActionsRef.current.beginSeatMove(event, seat),
+    [],
+  );
+  const onSeatSelect = useCallback((seat: Seat) => {
+    if (suppressClickRef.current) return;
+    if (!seatActionsRef.current.editMode)
+      seatActionsRef.current.setSelected(seat);
+  }, []);
+  const onSeatEdit = useCallback((seat: Seat) => {
+    const actions = seatActionsRef.current;
+    if (actions.manager && actions.editMode) actions.setEditor(seat);
+  }, []);
+  const onSeatDrop = useCallback(
+    (event: DragEvent, seat: Seat) =>
+      void seatActionsRef.current.drop(event, seat),
+    [],
+  );
+  // 좌석 레이어는 좌석 데이터와 표시 기준이 바뀔 때만 다시 만든다.
+  // 화면 이동·확대는 viewBox만 바꾸므로 이 목록을 건드리지 않는다.
+  const seatLayer = useMemo(
+    () =>
+      seats.map((seat) => (
+        <SeatShape
+          key={seat.id}
+          seat={seat}
+          canvasWidth={canvas.width}
+          canvasHeight={canvas.height}
+          active={selectedIds.has(seat.id) || selected?.id === seat.id}
+          focused={selected?.id === seat.id}
+          dimmed={!matchesFilter(seat, filters)}
+          mismatch={zoneMismatched(seat)}
+          needsReview={needsReviewSeat(seat)}
+          fill={fillFor(seat)}
+          darkLabel={colorMode === "organization" || !seat.employeeId}
+          editMode={editMode}
+          manager={Boolean(manager)}
+          onPointerDown={onSeatPointerDown}
+          onSelect={onSeatSelect}
+          onEdit={onSeatEdit}
+          onDropEmployee={onSeatDrop}
+        />
+      )),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      seats,
+      canvas,
+      selectedIds,
+      selected?.id,
+      filters,
+      colorMode,
+      orgColor,
+      editMode,
+      manager,
+    ],
+  );
+  // 미니맵의 한 점을 화면 중심으로 삼는다. 클릭과 드래그가 같은 경로를 쓴다.
+  const moveViewToMinimap = (event: ReactPointerEvent<SVGSVGElement>) => {
+    const point = toMapPoint(event.currentTarget, event.clientX, event.clientY);
+    if (!point) return;
+    setView((current) => ({
+      ...current,
+      ...clampCenter(point.x, point.y, visible.width, visible.height),
+    }));
+  };
   const applyTransform = (
     kind: "left" | "top" | "rotate" | "nudge",
     dx = 0,
@@ -939,6 +1163,49 @@ export function SeatMapPage() {
       if (delta[event.key]) {
         event.preventDefault();
         applyTransform("nudge", ...delta[event.key]);
+      }
+    };
+    window.addEventListener("keydown", keyboard);
+    return () => window.removeEventListener("keydown", keyboard);
+  });
+  // 조회 모드에서는 방향키가 화면을 옮기고, +/-로 확대, 0으로 전체 보기를 한다.
+  // 편집 모드의 방향키는 좌석 미세 이동이라 그쪽 핸들러가 먼저 가져간다.
+  useEffect(() => {
+    if (editMode) return;
+    const keyboard = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement;
+      if (["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
+      const stepX = (visible.width / canvas.width) * 0.25;
+      const stepY = (visible.height / canvas.height) * 0.25;
+      const pan: Record<string, [number, number]> = {
+        ArrowLeft: [-stepX, 0],
+        ArrowRight: [stepX, 0],
+        ArrowUp: [0, -stepY],
+        ArrowDown: [0, stepY],
+      };
+      if (pan[event.key]) {
+        event.preventDefault();
+        const [dx, dy] = pan[event.key];
+        setView((current) => ({
+          ...current,
+          ...clampCenter(
+            current.cx + dx,
+            current.cy + dy,
+            visible.width,
+            visible.height,
+          ),
+        }));
+        return;
+      }
+      if (event.key === "+" || event.key === "=") {
+        event.preventDefault();
+        applyZoom(view.zoom * 1.35);
+      } else if (event.key === "-" || event.key === "_") {
+        event.preventDefault();
+        applyZoom(view.zoom / 1.35);
+      } else if (event.key === "0") {
+        event.preventDefault();
+        setView(FIT_VIEW);
       }
     };
     window.addEventListener("keydown", keyboard);
@@ -1630,111 +1897,7 @@ export function SeatMapPage() {
                       </g>
                     );
                   })}
-                  {seats.map((seat) => {
-                    const left = seat.x * canvas.width,
-                      top = seat.y * canvas.height,
-                      width = seat.width * canvas.width,
-                      height = seat.height * canvas.height;
-                    const active =
-                      selectedIds.has(seat.id) || selected?.id === seat.id;
-                    const needsReview = needsReviewSeat(seat);
-                    const mismatch = zoneMismatched(seat);
-                    // 필터에 걸리지 않은 좌석은 지우지 않고 흐리게 남겨 맥락을 유지한다.
-                    const dimmed = !matchesFilter(seat, filters);
-                    const label = seat.employeeName || seat.seatNo;
-                    const fontSize = Math.min(
-                      13,
-                      Math.max(7.5, height * 0.34, width * 0.16),
-                    );
-                    const maxChars = Math.floor(width / (fontSize * 0.62));
-                    const showLabel =
-                      width >= 20 && height >= 11 && maxChars >= 2;
-                    return (
-                      <g
-                        key={seat.id}
-                        opacity={dimmed ? 0.14 : 1}
-                        transform={`rotate(${seat.rotation} ${left + width / 2} ${top + height / 2})`}
-                        onPointerDown={(event) => beginSeatMove(event, seat)}
-                        onClick={() => {
-                          if (suppressClickRef.current) return;
-                          if (!editMode) setSelected(seat);
-                        }}
-                        onDoubleClick={(event) => {
-                          event.stopPropagation();
-                          if (manager && editMode) setEditor(seat);
-                        }}
-                        onDragOver={(e) => manager && e.preventDefault()}
-                        onDrop={(e) => void drop(e, seat)}
-                        style={{
-                          cursor: editMode ? "move" : "pointer",
-                          touchAction: editMode ? "none" : "auto",
-                        }}
-                      >
-                        {active && (
-                          <rect
-                            x={left - 4}
-                            y={top - 4}
-                            width={width + 8}
-                            height={height + 8}
-                            rx="9"
-                            fill="none"
-                            stroke="#FFB703"
-                            strokeWidth="2"
-                            opacity=".55"
-                          />
-                        )}
-                        <rect
-                          x={left}
-                          y={top}
-                          width={width}
-                          height={height}
-                          rx={Math.min(6, Math.min(width, height) * 0.22)}
-                          fill={fillFor(seat)}
-                          fillOpacity={seat.employeeId ? 0.95 : 0.85}
-                          stroke={
-                            active
-                              ? "#FFB703"
-                              : mismatch
-                                ? "#C1436D"
-                                : needsReview
-                                  ? "#E79418"
-                                  : "#263E4D"
-                          }
-                          strokeWidth={
-                            active ? 3 : mismatch || needsReview ? 2 : 1.4
-                          }
-                          strokeDasharray={
-                            !active && (needsReview || mismatch)
-                              ? "5 3"
-                              : undefined
-                          }
-                        />
-                        {showLabel && (
-                          <text
-                            x={left + width / 2}
-                            y={top + height / 2}
-                            textAnchor="middle"
-                            dominantBaseline="central"
-                            fontSize={fontSize}
-                            fontWeight="700"
-                            fill={
-                              colorMode === "organization" || !seat.employeeId
-                                ? "#203846"
-                                : "white"
-                            }
-                            style={{ pointerEvents: "none" }}
-                          >
-                            {label.length > maxChars
-                              ? `${label.slice(0, Math.max(1, maxChars - 1))}…`
-                              : label}
-                          </text>
-                        )}
-                        <title>
-                          {`${seat.seatNo}${seat.employeeName ? ` · ${seat.employeeName}` : " · 빈 좌석"}${seat.employeeOrganizationName ? ` · ${seat.employeeOrganizationName}` : ""}${needsReview ? " · 검토 필요" : ""}${mismatch ? ` · 구역 불일치(지정 ${seat.organizationName})` : ""}`}
-                        </title>
-                      </g>
-                    );
-                  })}
+                  {seatLayer}
                 </svg>
               )}
             </Box>
@@ -1767,21 +1930,12 @@ export function SeatMapPage() {
                     cursor: "pointer",
                   }}
                   onPointerDown={(event) => {
-                    const point = toMapPoint(
-                      event.currentTarget,
-                      event.clientX,
-                      event.clientY,
-                    );
-                    if (!point) return;
-                    setView((current) => ({
-                      ...current,
-                      ...clampCenter(
-                        point.x,
-                        point.y,
-                        visible.width,
-                        visible.height,
-                      ),
-                    }));
+                    event.currentTarget.setPointerCapture(event.pointerId);
+                    moveViewToMinimap(event);
+                  }}
+                  onPointerMove={(event) => {
+                    // 버튼을 누른 채 끌면 화면이 따라온다.
+                    if (event.buttons === 1) moveViewToMinimap(event);
                   }}
                 >
                   {seats.map((seat) => (
@@ -1797,10 +1951,10 @@ export function SeatMapPage() {
                   ))}
                   {/* 현재 화면 영역 */}
                   <rect
-                    x={view.cx * canvas.width - visible.width / 2}
-                    y={view.cy * canvas.height - visible.height / 2}
-                    width={visible.width}
-                    height={visible.height}
+                    x={viewRect.x}
+                    y={viewRect.y}
+                    width={viewRect.width}
+                    height={viewRect.height}
                     fill="none"
                     stroke="#FFB703"
                     strokeWidth={Math.max(4, canvas.width * 0.006)}
