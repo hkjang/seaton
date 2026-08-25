@@ -56,6 +56,17 @@ import AlignHorizontalLeftRounded from "@mui/icons-material/AlignHorizontalLeftR
 import RotateRightRounded from "@mui/icons-material/RotateRightRounded";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, patchJSON, postJSON, putJSON } from "../api";
+import {
+  centerOn,
+  FIT_VIEW,
+  fitScaleFor,
+  focusOn,
+  type MapView,
+  toViewBox,
+  viewRectFor,
+  visibleSize,
+  zoomAround,
+} from "../lib/mapView";
 import { useAuth } from "../auth";
 import type {
   Building,
@@ -95,15 +106,6 @@ type ActivePan = {
   moved: boolean;
 };
 const fallbackCanvas = { width: 1000, height: 700 };
-
-// 좌석맵 뷰포트. cx/cy는 도면 대비 비율 좌표로 나타낸 화면 중심이고,
-// zoom은 도면 전체가 화면에 꼭 맞는 배율을 1로 둔 상대 배율이다.
-type MapView = { cx: number; cy: number; zoom: number };
-const FIT_VIEW: MapView = { cx: 0.5, cy: 0.5, zoom: 1 };
-const MIN_ZOOM = 1;
-const MAX_ZOOM = 12;
-// 검색으로 좌석을 찾았을 때 최소한 이 배율까지는 확대해 보여준다.
-const FOCUS_ZOOM = 3;
 
 // 좌석 색상 기준. 조직 모드는 어느 팀이 어디에 앉는지 한눈에 보여준다.
 type ColorMode = "status" | "organization";
@@ -454,50 +456,19 @@ export function SeatMapPage() {
   };
   // 화면에 꼭 맞는 배율을 1로 두고, 그 위에 view.zoom을 곱해 실제 배율을 만든다.
   // viewBox 종횡비를 컨테이너와 같게 유지하므로 레터박스가 생기지 않는다.
-  const fitScale = useMemo(() => {
-    if (!viewport.width || !viewport.height) return 1;
-    return Math.min(
-      viewport.width / canvas.width,
-      viewport.height / canvas.height,
-    );
-  }, [viewport, canvas]);
-  const visible = useMemo(() => {
-    const scale = fitScale * view.zoom;
-    if (!viewport.width || !viewport.height || scale <= 0)
-      return { width: canvas.width, height: canvas.height };
-    return { width: viewport.width / scale, height: viewport.height / scale };
-  }, [fitScale, view.zoom, viewport, canvas]);
-  // 화면 중심을 도면 안쪽으로 제한해 도면이 시야 밖으로 완전히 빠지지 않게 한다.
-  const clampCenter = (
-    cx: number,
-    cy: number,
-    width: number,
-    height: number,
-  ) => {
-    const halfX = width / canvas.width / 2,
-      halfY = height / canvas.height / 2;
-    return {
-      cx: halfX >= 0.5 ? 0.5 : Math.min(1 - halfX, Math.max(halfX, cx)),
-      cy: halfY >= 0.5 ? 0.5 : Math.min(1 - halfY, Math.max(halfY, cy)),
-    };
-  };
-  // 실제로 그려지는 화면 사각형. viewBox와 미니맵 표시가 같은 값을 쓴다.
-  const viewRect = useMemo(() => {
-    const { cx, cy } = clampCenter(
-      view.cx,
-      view.cy,
-      visible.width,
-      visible.height,
-    );
-    return {
-      x: cx * canvas.width - visible.width / 2,
-      y: cy * canvas.height - visible.height / 2,
-      width: visible.width,
-      height: visible.height,
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view.cx, view.cy, visible, canvas]);
-  const viewBox = `${viewRect.x} ${viewRect.y} ${viewRect.width} ${viewRect.height}`;
+  const fitScale = useMemo(
+    () => fitScaleFor(viewport, canvas),
+    [viewport, canvas],
+  );
+  const visible = useMemo(
+    () => visibleSize(viewport, canvas, view.zoom),
+    [viewport, canvas, view.zoom],
+  );
+  const viewRect = useMemo(
+    () => viewRectFor(view, viewport, canvas),
+    [view, viewport, canvas],
+  );
+  const viewBox = toViewBox(viewRect);
   // 컨테이너 크기를 추적해야 viewBox 종횡비를 맞출 수 있다.
   useEffect(() => {
     const node = stageRef.current;
@@ -509,59 +480,20 @@ export function SeatMapPage() {
     observer.observe(node);
     return () => observer.disconnect();
   }, [currentMap?.id, currentMap?.overlayReady]);
-  const applyZoom = (next: number, anchor?: { x: number; y: number }) => {
-    setView((current) => {
-      const zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next));
-      if (zoom === current.zoom) return current;
-      // 커서 아래 지점이 그대로 있도록 중심을 옮긴다.
-      const pivot = anchor ?? { x: current.cx, y: current.cy };
-      const ratio = current.zoom / zoom;
-      const cx = pivot.x - (pivot.x - current.cx) * ratio;
-      const cy = pivot.y - (pivot.y - current.cy) * ratio;
-      return {
-        zoom,
-        ...clampCenter(
-          cx,
-          cy,
-          viewport.width / (fitScale * zoom),
-          viewport.height / (fitScale * zoom),
-        ),
-      };
-    });
-  };
+  const applyZoom = (next: number, pivot?: { x: number; y: number }) =>
+    setView((current) => zoomAround(current, next, viewport, canvas, pivot));
+  const moveCenter = (cx: number, cy: number) =>
+    setView((current) => centerOn(current, cx, cy, viewport, canvas));
   // 좌석을 화면 중앙으로 가져오고 최소 배율까지 확대한다. 검색 결과 이동에 쓴다.
   const focusSeat = (seat: Seat) =>
-    setView((current) => {
-      const zoom = Math.min(MAX_ZOOM, Math.max(current.zoom, FOCUS_ZOOM));
-      const scale = fitScale * zoom;
-      const width =
-        scale > 0 && viewport.width ? viewport.width / scale : canvas.width;
-      const height =
-        scale > 0 && viewport.height ? viewport.height / scale : canvas.height;
-      return {
-        zoom,
-        ...clampCenter(
-          seat.x + seat.width / 2,
-          seat.y + seat.height / 2,
-          width,
-          height,
-        ),
-      };
-    });
-  // 휠 확대/축소. React의 onWheel은 passive로 붙어 기본 스크롤을 막을 수 없어
-  // 직접 등록한다. 커서 아래 지점을 고정해 확대하므로 원하는 곳을 바로 파고든다.
-  useEffect(() => {
-    const svg = svgRef.current;
-    if (!svg) return;
-    const onWheel = (event: WheelEvent) => {
-      event.preventDefault();
-      const point = toMapPoint(svg, event.clientX, event.clientY);
-      const step = Math.exp(-event.deltaY * 0.0015);
-      applyZoom(view.zoom * step, point ?? undefined);
-    };
-    svg.addEventListener("wheel", onWheel, { passive: false });
-    return () => svg.removeEventListener("wheel", onWheel);
-  });
+    setView((current) =>
+      focusOn(
+        current,
+        { x: seat.x, y: seat.y, width: seat.width, height: seat.height },
+        viewport,
+        canvas,
+      ),
+    );
   const orgColor = useMemo(
     () => new Map(organizations.map((o) => [o.id, o.color])),
     [organizations],
@@ -925,15 +857,7 @@ export function SeatMapPage() {
       Math.abs(event.clientY - pan.startY) > 3
     )
       pan.moved = true;
-    setView((current) => ({
-      ...current,
-      ...clampCenter(
-        pan.startCx - dx,
-        pan.startCy - dy,
-        visible.width,
-        visible.height,
-      ),
-    }));
+    moveCenter(pan.startCx - dx, pan.startCy - dy);
     return true;
   };
   const endPan = (event: ReactPointerEvent<SVGSVGElement>) => {
@@ -1044,10 +968,7 @@ export function SeatMapPage() {
   const moveViewToMinimap = (event: ReactPointerEvent<SVGSVGElement>) => {
     const point = toMapPoint(event.currentTarget, event.clientX, event.clientY);
     if (!point) return;
-    setView((current) => ({
-      ...current,
-      ...clampCenter(point.x, point.y, visible.width, visible.height),
-    }));
+    moveCenter(point.x, point.y);
   };
   const applyTransform = (
     kind: "left" | "top" | "rotate" | "nudge",
@@ -1217,15 +1138,7 @@ export function SeatMapPage() {
       if (pan[event.key]) {
         event.preventDefault();
         const [dx, dy] = pan[event.key];
-        setView((current) => ({
-          ...current,
-          ...clampCenter(
-            current.cx + dx,
-            current.cy + dy,
-            visible.width,
-            visible.height,
-          ),
-        }));
+        moveCenter(view.cx + dx, view.cy + dy);
         return;
       }
       if (event.key === "+" || event.key === "=") {
