@@ -6,6 +6,7 @@ import {
   Chip,
   CircularProgress,
   LinearProgress,
+  Paper,
   Skeleton,
   Stack,
   Typography,
@@ -164,5 +165,63 @@ export function InlineBusy({ label = "처리 중" }: { label?: string }) {
       <CircularProgress size={15} />
       <Typography variant="caption">{label}</Typography>
     </Stack>
+  );
+}
+
+/**
+ * 표를 불러오는 동안 자리를 잡아 준다. 빈 화면이 스쳤다가 채워지면 화면이
+ * 흔들려 보이고, "데이터가 없다"와 "아직 못 불러왔다"를 구분할 수 없다.
+ */
+export function TableSkeleton({
+  rows = 6,
+  height = 44,
+}: {
+  rows?: number;
+  height?: number;
+}) {
+  return (
+    <Paper sx={{ p: 2 }}>
+      {Array.from({ length: rows }, (_, index) => (
+        <Skeleton key={index} height={height} />
+      ))}
+    </Paper>
+  );
+}
+
+/**
+ * 내용이 없을 때 무엇을 하면 되는지까지 알려 주는 자리. 화면마다 다른 모양으로
+ * 흩어져 있던 빈 상태를 한 곳으로 모은다.
+ */
+export function EmptyState({
+  icon,
+  title,
+  description,
+  action,
+}: {
+  icon?: ReactNode;
+  title: string;
+  description?: string;
+  action?: ReactNode;
+}) {
+  return (
+    <Paper sx={{ p: 6, textAlign: "center" }}>
+      {icon && (
+        <Box sx={{ color: "text.disabled", mb: 1, "& svg": { fontSize: 44 } }}>
+          {icon}
+        </Box>
+      )}
+      <Typography color="text.secondary">{title}</Typography>
+      {description && (
+        <Typography
+          variant="caption"
+          color="text.disabled"
+          display="block"
+          sx={{ mt: 0.5 }}
+        >
+          {description}
+        </Typography>
+      )}
+      {action && <Box sx={{ mt: 2 }}>{action}</Box>}
+    </Paper>
   );
 }
