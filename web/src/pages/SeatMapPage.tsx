@@ -124,6 +124,9 @@ const zoneMismatched = (seat: Seat) =>
     seat.employeeOrganizationId &&
     seat.organizationId !== seat.employeeOrganizationId,
   );
+// 좌석을 대표하는 조직: 앉은 직원의 소속이 우선이고, 없으면 좌석에 지정된 구역.
+const seatOrgId = (seat: Seat) =>
+  seat.employeeOrganizationId ?? seat.organizationId ?? null;
 const matchesFilter = (seat: Seat, filters: Set<SeatFilter>) => {
   if (!filters.size) return true;
   if (filters.has("assigned") && seat.employeeId) return true;
@@ -351,7 +354,9 @@ export function SeatMapPage() {
   const [organizations, setOrganizations] = useState<Organization[]>([]),
     [colorMode, setColorMode] = useState<ColorMode>("status"),
     [filters, setFilters] = useState<Set<SeatFilter>>(new Set()),
-    [showZones, setShowZones] = useState(false);
+    [showZones, setShowZones] = useState(false),
+    // 범례에서 조직을 누르면 그 조직 좌석만 도드라진다.
+    [activeOrg, setActiveOrg] = useState<string | null>(null);
   const [editMode, setEditMode] = useState(
       Boolean(manager && searchParams.get("edit") === "1"),
     ),
@@ -602,13 +607,34 @@ export function SeatMapPage() {
       ...box,
     }));
   }, [showZones, seats, organizations, orgColor]);
-  const filteredCount = useMemo(
+  // 이 도면에 실제로 좌석이 있는 조직만 좌석 수와 함께 모은다. 조직 색상 모드의
+  // 범례로 쓰이며, 상태 기준 범례와 달리 도면마다 내용이 달라진다.
+  const mapOrganizations = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const seat of seats) {
+      const id = seatOrgId(seat);
+      if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+      .map(([id, count]) => ({
+        id,
+        count,
+        name: organizations.find((o) => o.id === id)?.name ?? "알 수 없는 조직",
+        color: orgColor.get(id) || "#8796A1",
+      }))
+      .sort((a, b) => b.count - a.count);
+  }, [seats, organizations, orgColor]);
+  // 실제로 도드라지는 좌석 수. 필터와 조직 강조를 함께 반영해야 화면과 맞는다.
+  const highlightedCount = useMemo(
     () =>
-      filters.size
-        ? seats.filter((s) => matchesFilter(s, filters)).length
-        : seats.length,
-    [seats, filters],
+      seats.filter(
+        (seat) =>
+          matchesFilter(seat, filters) &&
+          (activeOrg === null || seatOrgId(seat) === activeOrg),
+      ).length,
+    [seats, filters, activeOrg],
   );
+  const highlighting = filters.size > 0 || activeOrg !== null;
   const toggleFilter = (key: SeatFilter) =>
     setFilters((current) => {
       const next = new Set(current);
@@ -645,6 +671,7 @@ export function SeatMapPage() {
   const chooseMap = async (id: string) => {
     setMapId(id);
     setView(FIT_VIEW);
+    setActiveOrg(null);
     setSelected(null);
     setSelectedIds(new Set());
     setUndoStack([]);
@@ -983,7 +1010,10 @@ export function SeatMapPage() {
           canvasHeight={canvas.height}
           active={selectedIds.has(seat.id) || selected?.id === seat.id}
           focused={selected?.id === seat.id}
-          dimmed={!matchesFilter(seat, filters)}
+          dimmed={
+            !matchesFilter(seat, filters) ||
+            (activeOrg !== null && seatOrgId(seat) !== activeOrg)
+          }
           mismatch={zoneMismatched(seat)}
           needsReview={needsReviewSeat(seat)}
           fill={fillFor(seat)}
@@ -1003,6 +1033,7 @@ export function SeatMapPage() {
       selectedIds,
       selected?.id,
       filters,
+      activeOrg,
       colorMode,
       orgColor,
       editMode,
@@ -1738,9 +1769,21 @@ export function SeatMapPage() {
                   />
                 ))}
               </Box>
+              {activeOrg !== null && (
+                <Chip
+                  size="small"
+                  color="secondary"
+                  label={`${
+                    mapOrganizations.find((o) => o.id === activeOrg)?.name ??
+                    "조직"
+                  } 강조 해제`}
+                  onDelete={() => setActiveOrg(null)}
+                  onClick={() => setActiveOrg(null)}
+                />
+              )}
               <Typography variant="caption" color="text.secondary">
-                {filters.size
-                  ? `${filteredCount} / ${seats.length}석 강조`
+                {highlighting
+                  ? `${highlightedCount} / ${seats.length}석 강조`
                   : `${seats.length}석 전체`}
               </Typography>
             </Box>
@@ -1902,7 +1945,7 @@ export function SeatMapPage() {
               )}
             </Box>
             {/* 미니맵: 확대했을 때만 나타나 현재 보는 영역을 알려준다. */}
-            {view.zoom > 1.05 && (
+            {(view.zoom > 1.05 || filters.size > 0 || activeOrg !== null) && (
               <Box
                 sx={{
                   position: "absolute",
@@ -1946,7 +1989,12 @@ export function SeatMapPage() {
                       width={Math.max(3, seat.width * canvas.width)}
                       height={Math.max(3, seat.height * canvas.height)}
                       fill={fillFor(seat)}
-                      opacity={matchesFilter(seat, filters) ? 0.9 : 0.15}
+                      opacity={
+                        matchesFilter(seat, filters) &&
+                        (activeOrg === null || seatOrgId(seat) === activeOrg)
+                          ? 0.9
+                          : 0.15
+                      }
                     />
                   ))}
                   {/* 현재 화면 영역 */}
@@ -1962,6 +2010,8 @@ export function SeatMapPage() {
                 </svg>
               </Box>
             )}
+            {/* 범례는 색상 기준을 따라간다. 조직 모드에서 상태 범례를 보여주면
+                화면의 색과 설명이 어긋나기 때문이다. */}
             <Box
               sx={{
                 position: "absolute",
@@ -1971,7 +2021,9 @@ export function SeatMapPage() {
                 flexWrap: "wrap",
                 columnGap: 1.25,
                 rowGap: 0.5,
-                maxWidth: "calc(100% - 24px)",
+                maxWidth: "calc(100% - 200px)",
+                maxHeight: 96,
+                overflowY: "auto",
                 bgcolor: "rgba(255,255,255,.94)",
                 backdropFilter: "blur(6px)",
                 border: "1px solid rgba(14,45,62,.1)",
@@ -1981,41 +2033,97 @@ export function SeatMapPage() {
                 py: 0.85,
               }}
             >
-              {[
-                { color: "#087E8B", label: "배정", dashed: false },
-                { color: "#FFFFFF", label: "빈 좌석", dashed: false },
-                { color: "#3478C8", label: "공용", dashed: false },
-                { color: "#8796A1", label: "사용불가", dashed: false },
-                { color: "#FFFFFF", label: "검토 필요", dashed: true },
-                {
-                  color: "#FFFFFF",
-                  label: "구역 불일치",
-                  dashed: true,
-                  tone: "#C1436D",
-                },
-              ].map(({ color, label, dashed, tone }) => (
-                <Stack
-                  key={label}
-                  direction="row"
-                  spacing={0.6}
-                  alignItems="center"
-                >
-                  <Box
-                    sx={{
-                      width: 11,
-                      height: 11,
-                      borderRadius: 0.5,
-                      bgcolor: color,
-                      border: dashed
-                        ? `1.5px dashed ${tone ?? "#E79418"}`
-                        : "1px solid #8796A1",
-                    }}
-                  />
-                  <Typography variant="caption" sx={{ whiteSpace: "nowrap" }}>
-                    {label}
+              {colorMode === "organization" ? (
+                mapOrganizations.length ? (
+                  <>
+                    {mapOrganizations.map((org) => (
+                      <Stack
+                        key={org.id}
+                        direction="row"
+                        spacing={0.6}
+                        alignItems="center"
+                        onClick={() =>
+                          setActiveOrg((current) =>
+                            current === org.id ? null : org.id,
+                          )
+                        }
+                        sx={{
+                          cursor: "pointer",
+                          opacity:
+                            activeOrg === null || activeOrg === org.id
+                              ? 1
+                              : 0.4,
+                        }}
+                      >
+                        <Box
+                          sx={{
+                            width: 11,
+                            height: 11,
+                            borderRadius: 0.5,
+                            bgcolor: org.color,
+                            border: "1px solid rgba(14,45,62,.25)",
+                          }}
+                        />
+                        <Typography
+                          variant="caption"
+                          sx={{ whiteSpace: "nowrap" }}
+                          fontWeight={activeOrg === org.id ? 700 : 400}
+                        >
+                          {`${org.name} ${org.count}`}
+                        </Typography>
+                      </Stack>
+                    ))}
+                    {activeOrg !== null && (
+                      <Chip
+                        size="small"
+                        label="강조 해제"
+                        variant="outlined"
+                        onClick={() => setActiveOrg(null)}
+                      />
+                    )}
+                  </>
+                ) : (
+                  <Typography variant="caption" color="text.secondary">
+                    조직이 지정된 좌석이 없습니다
                   </Typography>
-                </Stack>
-              ))}
+                )
+              ) : (
+                [
+                  { color: "#087E8B", label: "배정", dashed: false },
+                  { color: "#FFFFFF", label: "빈 좌석", dashed: false },
+                  { color: "#3478C8", label: "공용", dashed: false },
+                  { color: "#8796A1", label: "사용불가", dashed: false },
+                  { color: "#FFFFFF", label: "검토 필요", dashed: true },
+                  {
+                    color: "#FFFFFF",
+                    label: "구역 불일치",
+                    dashed: true,
+                    tone: "#C1436D",
+                  },
+                ].map(({ color, label, dashed, tone }) => (
+                  <Stack
+                    key={label}
+                    direction="row"
+                    spacing={0.6}
+                    alignItems="center"
+                  >
+                    <Box
+                      sx={{
+                        width: 11,
+                        height: 11,
+                        borderRadius: 0.5,
+                        bgcolor: color,
+                        border: dashed
+                          ? `1.5px dashed ${tone ?? "#E79418"}`
+                          : "1px solid #8796A1",
+                      }}
+                    />
+                    <Typography variant="caption" sx={{ whiteSpace: "nowrap" }}>
+                      {label}
+                    </Typography>
+                  </Stack>
+                ))
+              )}
             </Box>
           </Paper>
           <Paper sx={{ p: 2.5, minHeight: { xs: 220, lg: 0 } }}>
