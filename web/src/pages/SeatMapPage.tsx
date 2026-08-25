@@ -67,6 +67,7 @@ import {
   visibleSize,
   zoomAround,
 } from "../lib/mapView";
+import { readableInk } from "../lib/color";
 import { useAuth } from "../auth";
 import type {
   Building,
@@ -260,7 +261,8 @@ const SeatShape = memo(function SeatShape({
       onDrop={(event) => onDropEmployee(event, seat)}
       style={{
         cursor: editMode ? "move" : "pointer",
-        touchAction: editMode ? "none" : "auto",
+        // 조회 모드에서도 좌석 위에서 끌면 화면이 움직여야 하므로 기본 제스처를 끈다.
+        touchAction: "none",
       }}
     >
       {active && (
@@ -331,6 +333,20 @@ const SeatShape = memo(function SeatShape({
   );
 });
 
+// 전역 키 처리는 도면 위에서만 동작해야 한다. 다이얼로그나 목록에 포커스가
+// 있을 때 방향키를 가로채면 그 화면이 조작 불가가 된다.
+const keyboardTargetsMap = (event: KeyboardEvent) => {
+  const target = event.target as HTMLElement | null;
+  if (!target) return true;
+  if (["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return false;
+  if (target.isContentEditable) return false;
+  // 열려 있는 모달·메뉴 안이면 그쪽이 우선이다.
+  if (target.closest('[role="dialog"], [role="listbox"], [role="menu"]'))
+    return false;
+  if (document.querySelector('[role="dialog"]')) return false;
+  return true;
+};
+
 export function SeatMapPage() {
   const { user } = useAuth(),
     navigate = useNavigate(),
@@ -371,11 +387,14 @@ export function SeatMapPage() {
   const panRef = useRef<ActivePan | null>(null);
   // 화면을 끌고 놓은 직후의 click은 좌석 선택으로 오해되므로 한 번 삼킨다.
   const suppressClickRef = useRef(false);
+  // 커서 모양은 렌더에 반영되어야 하므로 ref가 아니라 상태로 둔다.
+  const [panning, setPanning] = useState(false);
   // 컨테이너 크기 측정 전에 들어온 이동 요청은 잡아 두었다가 측정 후 적용한다.
   // URL의 ?q= 로 들어와 첫 렌더에서 검색이 실행되는 경우가 여기 해당한다.
   const pendingFocusRef = useRef<Seat | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
+  const observerRef = useRef<ResizeObserver | null>(null);
   const lastSearchRef = useRef("");
   const loadBase = async () => {
     setLoading(true);
@@ -472,17 +491,27 @@ export function SeatMapPage() {
     [view, viewport, canvas],
   );
   const viewBox = toViewBox(viewRect);
-  // 컨테이너 크기를 추적해야 viewBox 종횡비를 맞출 수 있다.
-  useEffect(() => {
-    const node = stageRef.current;
-    if (!node) return;
-    const measure = () =>
-      setViewport({ width: node.clientWidth, height: node.clientHeight });
+  // SVG 요소 자체를 관측한다. 컨테이너를 재면 안쪽 여백이 함께 잡혀
+  // viewBox 종횡비가 어긋나고 화면 이동이 커서를 못 따라간다.
+  // effect가 아니라 콜백 ref를 쓰는 이유는, 로딩 중 스켈레톤을 먼저 그리는
+  // 구조라 effect 시점에는 노드가 아직 없고 이후 의존성도 바뀌지 않기 때문이다.
+  useEffect(() => () => observerRef.current?.disconnect(), []);
+  const attachStage = useCallback((node: SVGSVGElement | null) => {
+    svgRef.current = node;
+    observerRef.current?.disconnect();
+    if (!node) {
+      setViewport({ width: 0, height: 0 });
+      return;
+    }
+    const measure = () => {
+      const box = node.getBoundingClientRect();
+      setViewport({ width: box.width, height: box.height });
+    };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(node);
-    return () => observer.disconnect();
-  }, [currentMap?.id, currentMap?.overlayReady]);
+    observerRef.current = observer;
+  }, []);
   const applyZoom = (next: number, pivot?: { x: number; y: number }) =>
     setView((current) => zoomAround(current, next, viewport, canvas, pivot));
   const moveCenter = (cx: number, cy: number) =>
@@ -595,6 +624,22 @@ export function SeatMapPage() {
       else next.add(key);
       return next;
     });
+  // 휠 확대/축소. React의 onWheel은 passive로 붙어 페이지 스크롤을 막을 수
+  // 없으므로 직접 등록한다. 커서 아래 지점을 고정해 원하는 곳을 바로 파고든다.
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const point = toMapPoint(svg, event.clientX, event.clientY);
+      applyZoom(
+        view.zoom * Math.exp(-event.deltaY * 0.0015),
+        point ?? undefined,
+      );
+    };
+    svg.addEventListener("wheel", onWheel, { passive: false });
+    return () => svg.removeEventListener("wheel", onWheel);
+  });
   const toMapPoint = (
     svg: SVGSVGElement,
     clientX: number,
@@ -671,11 +716,14 @@ export function SeatMapPage() {
   useEffect(() => {
     const term = searchParams.get("q")?.trim();
     const key = `${mapId}:${term}`;
-    if (!term || !mapId || key === lastSearchRef.current) return;
+    // 좌석이 도착하기 전에 검색하면 결과 좌석을 찾지 못해 이동이 조용히 무산된다.
+    // mapId 는 좌석 조회보다 먼저 정해지므로 좌석이 실릴 때까지 기다린다.
+    if (!term || !mapId || !seats.length || key === lastSearchRef.current)
+      return;
     lastSearchRef.current = key;
     setQuery(term);
     void runSearch(term);
-  }, [mapId, searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mapId, seats, searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
   const drop = async (event: DragEvent, seat: Seat) => {
     event.preventDefault();
     if (!manager) return;
@@ -855,7 +903,9 @@ export function SeatMapPage() {
   };
   // 좌석이 아닌 빈 영역에서 시작한 드래그는 화면 이동으로 처리한다.
   const beginPan = (event: ReactPointerEvent<SVGSVGElement>) => {
-    if (dragRef.current) return;
+    // 이미 끌고 있는 포인터가 있으면 무시한다. 두 번째 손가락이 팬을 가로채면
+    // 화면이 튀고, 그 손가락을 떼는 순간 첫 손가락의 이동이 갈 곳을 잃는다.
+    if (dragRef.current || panRef.current) return;
     panRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -864,7 +914,8 @@ export function SeatMapPage() {
       startCy: view.cy,
       moved: false,
     };
-    event.currentTarget.setPointerCapture(event.pointerId);
+    // 여기서 포인터를 캡처하면 뒤따르는 click이 SVG로 재지정되어 좌석 선택이
+    // 죽는다. 실제로 임계값을 넘어 움직인 뒤에 캡처한다.
   };
   const movePan = (event: ReactPointerEvent<SVGSVGElement>) => {
     const pan = panRef.current;
@@ -874,10 +925,15 @@ export function SeatMapPage() {
     const dx = (event.clientX - pan.startX) / scale / canvas.width;
     const dy = (event.clientY - pan.startY) / scale / canvas.height;
     if (
-      Math.abs(event.clientX - pan.startX) > 3 ||
-      Math.abs(event.clientY - pan.startY) > 3
-    )
+      !pan.moved &&
+      (Math.abs(event.clientX - pan.startX) > 3 ||
+        Math.abs(event.clientY - pan.startY) > 3)
+    ) {
       pan.moved = true;
+      event.currentTarget.setPointerCapture(event.pointerId);
+      setPanning(true);
+    }
+    if (!pan.moved) return true;
     moveCenter(pan.startCx - dx, pan.startCy - dy);
     return true;
   };
@@ -886,6 +942,11 @@ export function SeatMapPage() {
     if (!pan || pan.pointerId !== event.pointerId) return false;
     panRef.current = null;
     suppressClickRef.current = pan.moved;
+    if (pan.moved) {
+      if (event.currentTarget.hasPointerCapture(event.pointerId))
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      setPanning(false);
+    }
     return pan.moved;
   };
   const canvasPointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
@@ -962,7 +1023,7 @@ export function SeatMapPage() {
           mismatch={zoneMismatched(seat)}
           needsReview={needsReviewSeat(seat)}
           fill={fillFor(seat)}
-          darkLabel={colorMode === "organization" || !seat.employeeId}
+          darkLabel={readableInk(fillFor(seat)) === "#203846"}
           editMode={editMode}
           manager={Boolean(manager)}
           onPointerDown={onSeatPointerDown}
@@ -1135,8 +1196,7 @@ export function SeatMapPage() {
   useEffect(() => {
     if (!editMode) return;
     const keyboard = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement;
-      if (["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
+      if (!keyboardTargetsMap(event)) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
         event.preventDefault();
         if (event.shiftKey) void redo();
@@ -1169,8 +1229,7 @@ export function SeatMapPage() {
   useEffect(() => {
     if (editMode) return;
     const keyboard = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement;
-      if (["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
+      if (!keyboardTargetsMap(event)) return;
       const stepX = (visible.width / canvas.width) * 0.25;
       const stepY = (visible.height / canvas.height) * 0.25;
       const pan: Record<string, [number, number]> = {
@@ -1803,7 +1862,7 @@ export function SeatMapPage() {
                 </Box>
               ) : (
                 <svg
-                  ref={svgRef}
+                  ref={attachStage}
                   // 편집 모드에서는 좌석이 조작 대상이므로 단일 이미지로 묶지 않는다.
                   role={editMode ? "group" : "img"}
                   aria-label={`${currentMap.floorName} 좌석 배치도`}
@@ -1822,7 +1881,11 @@ export function SeatMapPage() {
                     boxShadow: "0 10px 30px rgba(14,45,62,.14)",
                     // 화면 이동과 확대를 직접 다루므로 브라우저 기본 제스처를 끈다.
                     touchAction: "none",
-                    cursor: panRef.current?.moved ? "grabbing" : "grab",
+                    cursor: editMode
+                      ? "default"
+                      : panning
+                        ? "grabbing"
+                        : "grab",
                   }}
                 >
                   <defs>
