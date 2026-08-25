@@ -71,7 +71,6 @@ import { readableInk } from "../lib/color";
 import {
   type ColorMode,
   deriveGrid,
-  matchesFilter,
   needsReviewSeat,
   SEAT_FILTERS,
   seatColor,
