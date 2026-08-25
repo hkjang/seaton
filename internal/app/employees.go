@@ -188,12 +188,41 @@ func (s *Server) importEmployees(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"success": success, "failed": len(failures), "failures": failures})
 }
 
+// listHistory는 좌석 변경 이력을 조회한다. 감사 목적의 화면이라 사람/좌석
+// 검색과 방식·기간 필터가 필요하고, 화면에서 "몇 건 중 몇 건"을 보여줄 수
+// 있도록 필터에 걸린 전체 건수도 함께 돌려준다.
+//
+// from/to 는 시각(RFC3339)으로 받는다. 날짜만 받아 서버 시간대로 해석하면
+// 사용자가 자기 시간대 기준으로 고른 "오늘"이 서버에서는 다른 날이 되어
+// 방금 만든 기록이 조회되지 않는다. 경계 계산은 사용자의 시간대를 아는
+// 브라우저가 맡고, 서버는 받은 구간을 그대로 쓴다. to 는 열린 구간이다.
 func (s *Server) listHistory(w http.ResponseWriter, r *http.Request) {
 	limit := 100
 	if v, _ := strconv.Atoi(r.URL.Query().Get("limit")); v > 0 && v <= 500 {
 		limit = v
 	}
-	rows, err := s.db.Query(r.Context(), `SELECT h.id,h.changed_at,COALESCE(e.employee_no,''),COALESCE(e.name,''),COALESCE(ps.seat_no,''),COALESCE(ns.seat_no,''),COALESCE(u.display_name,'System'),COALESCE(h.reason,''),h.source FROM seat_history h LEFT JOIN employees e ON e.id=h.employee_id LEFT JOIN seats ps ON ps.id=h.previous_seat_id LEFT JOIN seats ns ON ns.id=h.new_seat_id LEFT JOIN users u ON u.id=h.changed_by ORDER BY h.changed_at DESC LIMIT $1`, limit)
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	source := strings.TrimSpace(r.URL.Query().Get("source"))
+	from := strings.TrimSpace(r.URL.Query().Get("from"))
+	to := strings.TrimSpace(r.URL.Query().Get("to"))
+	// 필터 조건은 목록과 건수 집계가 똑같이 써야 하므로 한 곳에 둔다.
+	const where = `WHERE ($1='' OR e.name ILIKE '%%'||$1||'%%' OR e.employee_no ILIKE '%%'||$1||'%%'
+		OR ps.seat_no ILIKE '%%'||$1||'%%' OR ns.seat_no ILIKE '%%'||$1||'%%')
+	AND ($2='' OR h.source=$2)
+	AND ($3='' OR h.changed_at >= $3::timestamptz)
+	AND ($4='' OR h.changed_at < $4::timestamptz)`
+	const joins = `FROM seat_history h
+	LEFT JOIN employees e ON e.id=h.employee_id
+	LEFT JOIN seats ps ON ps.id=h.previous_seat_id
+	LEFT JOIN seats ns ON ns.id=h.new_seat_id
+	LEFT JOIN users u ON u.id=h.changed_by`
+	total := 0
+	if err := s.db.QueryRow(r.Context(), `SELECT COUNT(*) `+joins+" "+where, query, source, from, to).Scan(&total); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_filter", "조회 조건을 확인하세요")
+		return
+	}
+	rows, err := s.db.Query(r.Context(), `SELECT h.id,h.changed_at,COALESCE(e.employee_no,''),COALESCE(e.name,''),COALESCE(ps.seat_no,''),COALESCE(ns.seat_no,''),COALESCE(u.display_name,'System'),COALESCE(h.reason,''),h.source `+
+		joins+" "+where+` ORDER BY h.changed_at DESC LIMIT $5`, query, source, from, to, limit)
 	if err != nil {
 		notFoundOrServer(w, err)
 		return
@@ -207,5 +236,5 @@ func (s *Server) listHistory(w http.ResponseWriter, r *http.Request) {
 			items = append(items, map[string]any{"id": id, "changedAt": changed, "employeeNo": employeeNo, "employeeName": name, "previousSeat": previous, "newSeat": next, "actor": actor, "reason": reason, "source": source})
 		}
 	}
-	writeJSON(w, 200, map[string]any{"items": items})
+	writeJSON(w, 200, map[string]any{"items": items, "total": total, "limit": limit})
 }
