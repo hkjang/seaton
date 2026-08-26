@@ -29,6 +29,8 @@ import AutoAwesomeRounded from "@mui/icons-material/AutoAwesomeRounded";
 import PublishRounded from "@mui/icons-material/PublishRounded";
 import GridOnRounded from "@mui/icons-material/GridOnRounded";
 import CheckCircleRounded from "@mui/icons-material/CheckCircleRounded";
+import RadioButtonCheckedRounded from "@mui/icons-material/RadioButtonCheckedRounded";
+import RadioButtonUncheckedRounded from "@mui/icons-material/RadioButtonUncheckedRounded";
 import EditLocationAltRounded from "@mui/icons-material/EditLocationAltRounded";
 import EventSeatRounded from "@mui/icons-material/EventSeatRounded";
 import ArrowForwardRounded from "@mui/icons-material/ArrowForwardRounded";
@@ -125,6 +127,33 @@ export function MapsPage() {
       });
     }
   };
+  const setupSteps = [
+    {
+      label: "1. 사업장",
+      done: buildings.length > 0,
+      detail: `${buildings.length}개`,
+    },
+    {
+      label: "2. 층",
+      done: floors.length > 0,
+      detail: `${floors.length}개`,
+    },
+    {
+      label: "3. 도면",
+      done: maps.length > 0,
+      detail: `${maps.length}개 버전`,
+    },
+    {
+      label: "4. AI 분석",
+      done: maps.some((map) => map.status !== "uploaded"),
+      detail: `${maps.reduce((sum, map) => sum + (map.seatCount ?? 0), 0)}석`,
+    },
+    {
+      label: "5. 게시",
+      done: maps.some((map) => map.active),
+      detail: maps.some((map) => map.active) ? "서비스 중" : "대기",
+    },
+  ];
   return (
     <Box sx={{ p: { xs: 2, md: 3 }, maxWidth: 1400, mx: "auto" }}>
       <PageHeader
@@ -195,51 +224,51 @@ export function MapsPage() {
           }
           spacing={1}
         >
-          {[
-            {
-              label: "1. 사업장",
-              done: buildings.length > 0,
-              detail: `${buildings.length}개`,
-            },
-            {
-              label: "2. 층",
-              done: floors.length > 0,
-              detail: `${floors.length}개`,
-            },
-            {
-              label: "3. 도면",
-              done: maps.length > 0,
-              detail: `${maps.length}개 버전`,
-            },
-            {
-              label: "4. AI 분석",
-              done: maps.some((map) => map.status !== "uploaded"),
-              detail: `${maps.reduce((sum, map) => sum + (map.seatCount ?? 0), 0)}석`,
-            },
-            {
-              label: "5. 게시",
-              done: maps.some((map) => map.active),
-              detail: maps.some((map) => map.active) ? "서비스 중" : "대기",
-            },
-          ].map((step) => (
-            <Stack
-              key={step.label}
-              direction="row"
-              alignItems="center"
-              spacing={1}
-              sx={{ flex: 1, minWidth: 0, p: 1 }}
-            >
-              <CheckCircleRounded color={step.done ? "success" : "disabled"} />
-              <Box minWidth={0}>
-                <Typography variant="body2" fontWeight={750}>
-                  {step.label}
-                </Typography>
-                <Typography variant="caption" color="text.secondary">
-                  {step.detail}
-                </Typography>
-              </Box>
-            </Stack>
-          ))}
+          {setupSteps.map((step, index) => {
+            // 아직 하지 않은 단계에도 체크 표시가 붙어 있어, 처음 설치한 관리자가
+            // 다섯 단계를 모두 끝낸 것으로 읽었다. 끝난 단계만 체크로 두고 지금
+            // 할 단계를 따로 드러낸다.
+            const next = setupSteps.findIndex((item) => !item.done);
+            const current = index === next;
+            return (
+              <Stack
+                key={step.label}
+                direction="row"
+                alignItems="center"
+                spacing={1}
+                aria-label={`${step.label} · ${step.done ? "완료" : current ? "다음 할 일" : "대기"}`}
+                sx={{ flex: 1, minWidth: 0, p: 1 }}
+              >
+                {step.done ? (
+                  <CheckCircleRounded color="success" />
+                ) : current ? (
+                  <RadioButtonCheckedRounded color="primary" />
+                ) : (
+                  <RadioButtonUncheckedRounded
+                    sx={{ color: "text.disabled" }}
+                  />
+                )}
+                <Box minWidth={0}>
+                  <Typography
+                    variant="body2"
+                    fontWeight={750}
+                    color={
+                      step.done || current ? "text.primary" : "text.disabled"
+                    }
+                  >
+                    {step.label}
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    color={current ? "primary.main" : "text.secondary"}
+                    fontWeight={current ? 700 : 400}
+                  >
+                    {current ? `${step.detail} · 지금 할 차례` : step.detail}
+                  </Typography>
+                </Box>
+              </Stack>
+            );
+          })}
         </Stack>
       </Paper>
       {loading ? (
