@@ -47,6 +47,19 @@ test.describe("좌석맵", () => {
     await expect(zoom).toHaveText("100%");
   });
 
+  test("편집 도구가 확대 조작과 도면을 가리지 않는다", async ({ page }) => {
+    await page.getByRole("button", { name: /배치 편집/ }).click();
+    const tools = page.getByText(/Shift로 다중 선택|개 선택/);
+    await expect(tools).toBeVisible();
+    // 편집 도구가 도면 위에 떠 있으면 확대 배율 표시와 좌석을 함께 덮는다.
+    const bar = (await tools.boundingBox())!;
+    const canvas = (await mapCanvas(page).boundingBox())!;
+    expect(bar.y + bar.height).toBeLessThanOrEqual(canvas.y + 1);
+    await expect(page.getByText(/^\d+%$/)).toBeVisible();
+    const zoom = (await page.getByText(/^\d+%$/).boundingBox())!;
+    expect(overlaps(bar, zoom)).toBe(false);
+  });
+
   test("확대하면 미니맵이 나타난다", async ({ page }) => {
     const minimap = page.getByLabel("도면 전체 미니맵");
     await expect(minimap).toBeHidden();
@@ -82,6 +95,15 @@ test.describe("좌석맵", () => {
     await expect(page.getByText(/\d+ \/ \d+석 강조/)).toBeVisible();
   });
 });
+
+/** 두 사각형이 한 점이라도 겹치는지. */
+const overlaps = (a: Box, b: Box) =>
+  a.x < b.x + b.width &&
+  b.x < a.x + a.width &&
+  a.y < b.y + b.height &&
+  b.y < a.y + a.height;
+
+type Box = { x: number; y: number; width: number; height: number };
 
 /** 화면에 그려진 좌석 라벨의 실제 픽셀 높이. */
 const labelHeight = async (page: Page) => {

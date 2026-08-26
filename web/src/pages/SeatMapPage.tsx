@@ -1540,32 +1540,9 @@ export function SeatMapPage() {
                   onClick={() => setActiveOrg(null)}
                 />
               )}
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                sx={{ ml: "auto", whiteSpace: "nowrap" }}
-              >
-                {highlighting
-                  ? `${highlightedCount} / ${seats.length}석 강조`
-                  : `${seats.length}석 전체`}
-              </Typography>
-            </Box>
-            <Box
-              sx={{
-                position: "relative",
-                flex: 1,
-                minHeight: 0,
-                overflow: "hidden",
-              }}
-            >
               {editMode && (
                 <Box
                   sx={{
-                    position: "absolute",
-                    top: 12,
-                    left: "50%",
-                    transform: "translateX(-50%)",
-                    zIndex: 3,
                     display: "flex",
                     alignItems: "center",
                     gap: 0.5,
@@ -1697,6 +1674,24 @@ export function SeatMapPage() {
                   </Typography>
                 </Box>
               )}
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ ml: "auto", whiteSpace: "nowrap" }}
+              >
+                {highlighting
+                  ? `${highlightedCount} / ${seats.length}석 강조`
+                  : `${seats.length}석 전체`}
+              </Typography>
+            </Box>
+            <Box
+              sx={{
+                position: "relative",
+                flex: 1,
+                minHeight: 0,
+                overflow: "hidden",
+              }}
+            >
               <Box
                 sx={{
                   position: "absolute",
