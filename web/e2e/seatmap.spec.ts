@@ -60,6 +60,16 @@ test.describe("좌석맵", () => {
     expect(overlaps(bar, zoom)).toBe(false);
   });
 
+  test("1280px 노트북 화면에서 세 칸이 모두 들어간다", async ({ page }) => {
+    // 세 칸의 최소 폭 합이 화면을 넘겨 상세 패널이 오른쪽으로 잘려 나간 적이 있다.
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await expect(page.getByText("좌석을 선택하면")).toBeVisible();
+    const detail = (await page.getByText("좌석을 선택하면").boundingBox())!;
+    expect(detail.x + detail.width).toBeLessThanOrEqual(1280);
+    const canvas = (await mapCanvas(page).boundingBox())!;
+    expect(canvas.width).toBeGreaterThan(300);
+  });
+
   test("확대하면 미니맵이 나타난다", async ({ page }) => {
     const minimap = page.getByLabel("도면 전체 미니맵");
     await expect(minimap).toBeHidden();
