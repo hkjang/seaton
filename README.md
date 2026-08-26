@@ -100,6 +100,22 @@ cd .. && go test ./...
 docker build -t seaton:dev .
 ```
 
+### 화면 검증
+
+타입 검사와 단위 테스트는 화면이 실제로 어떻게 그려지는지 보지 못한다. 좌석 라벨이 잘려 읽히지 않거나, 조작 패널이 도면을 가리거나, 좌석 클릭이 먹히지 않는 결함은 브라우저로 열어야 드러난다. 그래서 실행 중인 SeatOn을 그대로 열어 확인하는 Playwright 검증을 둔다.
+
+```bash
+docker compose up -d                       # 검증 대상 서버 기동
+cd web && npm ci
+npx playwright install --with-deps chromium
+E2E_BASE_URL=http://127.0.0.1:8080 \
+E2E_USERNAME=admin E2E_PASSWORD=... npm run e2e
+```
+
+첫 실행 시 `web/e2e/seed.mjs` 가 사업장·층·도면·좌석·직원·배정을 만들어 둔다. 도면이 이미 있으면 아무것도 하지 않으므로 반복 실행해도 안전하다. 좌석은 `web/e2e/fixtures/plan.png` 를 CV 엔진으로 분석해 만들어지므로, 인식 정확도가 무너지면 시드 단계에서 바로 실패한다.
+
+검증 항목은 과거에 실제로 났던 결함을 그대로 따라간다. 좌석 번호가 접두사에 밀려 잘리지 않을 것, 조작 패널이 도면 영역을 침범하지 않을 것, 휠 확대가 동작하고 그때 라벨이 좌석을 뒤덮지 않을 것, 좌석 클릭으로 상세가 열릴 것, 각 화면에서 콘솔 오류가 없을 것이다. CI의 `e2e` 잡이 PostgreSQL 서비스와 방금 만든 이미지를 띄워 같은 검증을 돌리고, 실패하면 서버 로그와 Playwright 리포트를 남긴다.
+
 API/MCP 세부사항은 [docs/API_AND_MCP.md](docs/API_AND_MCP.md), 보안·배치 구조는 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), 운영과 엔진 설정은 [docs/ADMIN_GUIDE.md](docs/ADMIN_GUIDE.md)를 참고한다.
 
 ### 문서 산출물

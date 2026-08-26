@@ -70,14 +70,18 @@ import {
 import { readableInk } from "../lib/color";
 import {
   type ColorMode,
+  commonSeatPrefix,
   deriveGrid,
   needsReviewSeat,
   SEAT_FILTERS,
   seatColor,
   type SeatFilter,
   seatHighlighted,
+  seatLabelLayout,
   seatOrgId,
+  shortSeatNo,
   zoneMismatched,
+  zoomTier,
 } from "../lib/seats";
 import { useAuth } from "../auth";
 import type {
@@ -133,6 +137,10 @@ type SeatShapeProps = {
   seat: Seat;
   canvasWidth: number;
   canvasHeight: number;
+  /** 도면 좌석들이 공유하는 번호 접두사. 좁은 좌석 안에서는 떼고 보여준다. */
+  numberPrefix: string;
+  /** 확대 단계. 라벨을 이 값으로 나눠 화면상 크기를 일정하게 지킨다. */
+  tier: number;
   active: boolean;
   focused: boolean;
   dimmed: boolean;
@@ -152,6 +160,8 @@ const SeatShape = memo(function SeatShape({
   seat,
   canvasWidth,
   canvasHeight,
+  numberPrefix,
+  tier,
   active,
   focused,
   dimmed,
@@ -170,10 +180,12 @@ const SeatShape = memo(function SeatShape({
     top = seat.y * canvasHeight,
     width = seat.width * canvasWidth,
     height = seat.height * canvasHeight;
-  const label = seat.employeeName || seat.seatNo;
-  const fontSize = Math.min(13, Math.max(7.5, height * 0.34, width * 0.16));
-  const maxChars = Math.floor(width / (fontSize * 0.62));
-  const showLabel = width >= 20 && height >= 11 && maxChars >= 2;
+  const label = seat.employeeName || shortSeatNo(seat.seatNo, numberPrefix);
+  const {
+    show: showLabel,
+    fontSize,
+    text,
+  } = seatLabelLayout(label, width, height, tier);
   return (
     <g
       opacity={dimmed ? 0.14 : 1}
@@ -248,9 +260,7 @@ const SeatShape = memo(function SeatShape({
           fill={darkLabel ? "#203846" : "white"}
           style={{ pointerEvents: "none" }}
         >
-          {label.length > maxChars
-            ? `${label.slice(0, Math.max(1, maxChars - 1))}…`
-            : label}
+          {text}
         </text>
       )}
       <title>
@@ -927,8 +937,16 @@ export function SeatMapPage() {
       void seatActionsRef.current.drop(event, seat),
     [],
   );
+  const seatNumberPrefix = useMemo(
+    () => commonSeatPrefix(seats.map((seat) => seat.seatNo)),
+    [seats],
+  );
+  // 라벨 크기는 확대 배율에 반비례해야 화면상 크기가 유지되지만, 배율을 그대로
+  // 쓰면 휠을 굴릴 때마다 좌석 전체를 다시 그린다. 단계로 뭉쳐 다시 그리는 횟수를
+  // 전체 배율 구간에서 네 번으로 묶는다.
+  const labelTier = zoomTier(view.zoom);
   // 좌석 레이어는 좌석 데이터와 표시 기준이 바뀔 때만 다시 만든다.
-  // 화면 이동·확대는 viewBox만 바꾸므로 이 목록을 건드리지 않는다.
+  // 화면 이동은 viewBox만 바꾸므로 이 목록을 건드리지 않는다.
   const seatLayer = useMemo(
     () =>
       seats.map((seat) => (
@@ -937,6 +955,8 @@ export function SeatMapPage() {
           seat={seat}
           canvasWidth={canvas.width}
           canvasHeight={canvas.height}
+          numberPrefix={seatNumberPrefix}
+          tier={labelTier}
           active={selectedIds.has(seat.id) || selected?.id === seat.id}
           focused={selected?.id === seat.id}
           dimmed={!seatHighlighted(seat, filters, activeOrg)}
@@ -956,6 +976,8 @@ export function SeatMapPage() {
     [
       seats,
       canvas,
+      seatNumberPrefix,
+      labelTier,
       selectedIds,
       selected?.id,
       filters,
@@ -1443,219 +1465,25 @@ export function SeatMapPage() {
           </Paper>
           <Paper
             sx={{
-              position: "relative",
+              display: "flex",
+              flexDirection: "column",
               overflow: "hidden",
               minHeight: { xs: 430, lg: 0 },
               bgcolor: "#E9EFF2",
             }}
           >
-            {editMode && (
-              <Box
-                sx={{
-                  position: "absolute",
-                  top: 12,
-                  left: "50%",
-                  transform: "translateX(-50%)",
-                  zIndex: 3,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 0.5,
-                  p: 0.5,
-                  bgcolor: "rgba(7,26,43,.92)",
-                  color: "white",
-                  borderRadius: 2,
-                  boxShadow: 3,
-                }}
-              >
-                <Tooltip
-                  title={
-                    grid
-                      ? `보정된 격자에 스냅 · 가로 ${(grid.pitchX * 100).toFixed(1)}% 세로 ${(grid.pitchY * 100).toFixed(1)}%`
-                      : "고정 간격에 스냅 · 도면 격자를 보정하면 실제 책상 간격을 따릅니다"
-                  }
-                >
-                  <Chip
-                    size="small"
-                    icon={<GridOnRounded />}
-                    label={
-                      snapEnabled
-                        ? grid
-                          ? "도면 격자"
-                          : "격자 스냅"
-                        : "자유 이동"
-                    }
-                    onClick={() => setSnapEnabled((value) => !value)}
-                    sx={{
-                      bgcolor: !snapEnabled
-                        ? "rgba(255,255,255,.12)"
-                        : grid
-                          ? "rgba(8,126,139,.4)"
-                          : "rgba(255,183,3,.22)",
-                      color: "white",
-                      fontWeight: 600,
-                      "& .MuiChip-icon": { color: "inherit" },
-                    }}
-                  />
-                </Tooltip>
-                <Tooltip
-                  title={
-                    selectedIds.size > 1
-                      ? "선택한 좌석의 간격으로 도면 격자를 보정합니다"
-                      : "가로·세로로 떨어진 좌석을 2개 이상 선택하세요"
-                  }
-                >
-                  <span>
-                    <IconButton
-                      size="small"
-                      disabled={selectedIds.size < 2 || moving}
-                      onClick={() => void calibrateGrid()}
-                      sx={{ color: "white" }}
-                      aria-label="선택 좌석으로 격자 보정"
-                    >
-                      <StraightenRounded />
-                    </IconButton>
-                  </span>
-                </Tooltip>
-                <Tooltip
-                  title={
-                    grid
-                      ? selectedIds.size
-                        ? `선택한 ${selectedIds.size}개 좌석을 격자에 정렬`
-                        : "도면 전체 좌석을 격자에 정렬"
-                      : "먼저 도면 격자를 보정하세요"
-                  }
-                >
-                  <span>
-                    <IconButton
-                      size="small"
-                      disabled={!grid || moving}
-                      onClick={() => void alignToGrid()}
-                      sx={{ color: "white" }}
-                      aria-label="격자에 정렬"
-                    >
-                      <AutoFixHighRounded />
-                    </IconButton>
-                  </span>
-                </Tooltip>
-                {grid && (
-                  <Tooltip title="격자 보정 해제">
-                    <span>
-                      <IconButton
-                        size="small"
-                        disabled={moving}
-                        onClick={() => void clearGrid()}
-                        sx={{ color: "white" }}
-                        aria-label="격자 보정 해제"
-                      >
-                        <GridOffRounded />
-                      </IconButton>
-                    </span>
-                  </Tooltip>
-                )}
-                <Tooltip title="실행 취소 · Ctrl/⌘ Z">
-                  <span>
-                    <IconButton
-                      size="small"
-                      disabled={!undoStack.length || moving}
-                      onClick={() => void undo()}
-                      sx={{ color: "white" }}
-                    >
-                      <UndoRounded />
-                    </IconButton>
-                  </span>
-                </Tooltip>
-                <Tooltip title="다시 실행 · Ctrl/⌘ Shift Z">
-                  <span>
-                    <IconButton
-                      size="small"
-                      disabled={!redoStack.length || moving}
-                      onClick={() => void redo()}
-                      sx={{ color: "white" }}
-                    >
-                      <RedoRounded />
-                    </IconButton>
-                  </span>
-                </Tooltip>
-                <Typography
-                  variant="caption"
-                  sx={{ px: 0.7, whiteSpace: "nowrap" }}
-                >
-                  {moving
-                    ? "저장 중…"
-                    : selectedIds.size
-                      ? `${selectedIds.size}개 선택`
-                      : "Shift로 다중 선택"}
-                </Typography>
-              </Box>
-            )}
+            {/* 색상 기준과 좌석 필터. 도면을 가리지 않도록 캔버스 위쪽에 따로 놓는다. */}
             <Box
               sx={{
-                position: "absolute",
-                top: 12,
-                left: 12,
-                zIndex: 2,
                 display: "flex",
-                gap: 0.5,
-                p: 0.5,
+                flexWrap: "wrap",
                 alignItems: "center",
-                bgcolor: "rgba(255,255,255,.92)",
-                backdropFilter: "blur(6px)",
-                borderRadius: 2,
-                boxShadow: 2,
-              }}
-            >
-              <Tooltip title="축소">
-                <IconButton
-                  size="small"
-                  onClick={() => applyZoom(view.zoom / 1.35)}
-                >
-                  <ZoomOutRounded />
-                </IconButton>
-              </Tooltip>
-              <Tooltip title="전체 보기 (도면 맞춤)">
-                <IconButton size="small" onClick={() => setView(FIT_VIEW)}>
-                  <CenterFocusStrongRounded />
-                </IconButton>
-              </Tooltip>
-              <Tooltip title="확대">
-                <IconButton
-                  size="small"
-                  onClick={() => applyZoom(view.zoom * 1.35)}
-                >
-                  <ZoomInRounded />
-                </IconButton>
-              </Tooltip>
-              <Typography
-                variant="caption"
-                fontWeight={700}
-                sx={{
-                  px: 0.75,
-                  minWidth: 42,
-                  textAlign: "center",
-                  color: "text.secondary",
-                  fontVariantNumeric: "tabular-nums",
-                }}
-              >
-                {Math.round(view.zoom * 100)}%
-              </Typography>
-            </Box>
-            {/* 색상 기준과 좌석 필터. 조회 화면에서 원하는 갈래만 도드라지게 한다. */}
-            <Box
-              sx={{
-                position: "absolute",
-                top: 60,
-                left: 12,
-                zIndex: 2,
-                display: "flex",
-                flexDirection: "column",
-                gap: 0.75,
-                p: 1,
-                maxWidth: 232,
-                bgcolor: "rgba(255,255,255,.92)",
-                backdropFilter: "blur(6px)",
-                border: "1px solid rgba(14,45,62,.1)",
-                borderRadius: 2,
-                boxShadow: 2,
+                rowGap: 0.75,
+                columnGap: 1,
+                px: 1.5,
+                py: 1,
+                bgcolor: "#fff",
+                borderBottom: "1px solid rgba(14,45,62,.1)",
               }}
             >
               <Stack direction="row" spacing={0.5} alignItems="center">
@@ -1683,7 +1511,7 @@ export function SeatMapPage() {
                   />
                 </Tooltip>
               </Stack>
-              <Divider flexItem />
+              <Divider orientation="vertical" flexItem sx={{ my: 0.25 }} />
               <Box
                 sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}
                 role="group"
@@ -1712,338 +1540,546 @@ export function SeatMapPage() {
                   onClick={() => setActiveOrg(null)}
                 />
               )}
-              <Typography variant="caption" color="text.secondary">
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ ml: "auto", whiteSpace: "nowrap" }}
+              >
                 {highlighting
                   ? `${highlightedCount} / ${seats.length}석 강조`
                   : `${seats.length}석 전체`}
               </Typography>
             </Box>
-            {!currentMap.overlayReady && (
-              <Chip
-                size="small"
-                color="warning"
-                label={
-                  currentMap.contentType === "application/pdf"
-                    ? "PDF 미리보기 없음 · 오버레이를 표시할 수 없습니다"
-                    : "도면 크기 정보 없음 · 좌석 정렬이 어긋날 수 있습니다"
-                }
-                sx={{
-                  position: "absolute",
-                  top: 12,
-                  right: 12,
-                  zIndex: 2,
-                  fontWeight: 600,
-                }}
-              />
-            )}
             <Box
-              ref={stageRef}
               sx={{
-                position: "absolute",
-                inset: 0,
+                position: "relative",
+                flex: 1,
+                minHeight: 0,
                 overflow: "hidden",
-                p: 2.5,
               }}
             >
-              {/* 오버레이 기준 래스터가 없을 때만 원본 뷰어로 물러난다. */}
-              {!currentMap.overlayReady ? (
+              {editMode && (
                 <Box
-                  sx={{ width: "100%", height: "100%", position: "relative" }}
-                >
-                  <object
-                    data={currentMap.contentUrl}
-                    type={currentMap.contentType}
-                    width="100%"
-                    height="100%"
-                    aria-label="원본 도면"
-                  />
-                  <Typography
-                    variant="caption"
-                    sx={{
-                      position: "absolute",
-                      bottom: 10,
-                      left: 10,
-                      bgcolor: "rgba(255,255,255,.94)",
-                      border: "1px solid rgba(14,45,62,.1)",
-                      borderRadius: 1.5,
-                      boxShadow: 1,
-                      px: 1.25,
-                      py: 0.5,
-                    }}
-                  >
-                    좌석 오버레이 기준 이미지를 준비하지 못했습니다. 도면을 다시
-                    업로드하거나 AI 분석을 실행해 주세요.
-                  </Typography>
-                </Box>
-              ) : (
-                <svg
-                  ref={attachStage}
-                  // 편집 모드에서는 좌석이 조작 대상이므로 단일 이미지로 묶지 않는다.
-                  role={editMode ? "group" : "img"}
-                  aria-label={`${currentMap.floorName} 좌석 배치도`}
-                  viewBox={viewBox}
-                  onDoubleClick={mapDoubleClick}
-                  onPointerMove={canvasPointerMove}
-                  onPointerUp={canvasPointerUp}
-                  onPointerCancel={canvasPointerUp}
-                  onPointerDown={canvasPointerDown}
-                  style={{
-                    display: "block",
-                    width: "100%",
-                    height: "100%",
-                    background: "#fff",
-                    borderRadius: 14,
-                    boxShadow: "0 10px 30px rgba(14,45,62,.14)",
-                    // 화면 이동과 확대를 직접 다루므로 브라우저 기본 제스처를 끈다.
-                    touchAction: "none",
-                    cursor: editMode
-                      ? "default"
-                      : panning
-                        ? "grabbing"
-                        : "grab",
+                  sx={{
+                    position: "absolute",
+                    top: 12,
+                    left: "50%",
+                    transform: "translateX(-50%)",
+                    zIndex: 3,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 0.5,
+                    p: 0.5,
+                    bgcolor: "rgba(7,26,43,.92)",
+                    color: "white",
+                    borderRadius: 2,
+                    boxShadow: 3,
                   }}
                 >
-                  <defs>
-                    {/* 보정된 격자가 있으면 그 간격과 원점을 그대로 그린다. */}
-                    <pattern
-                      id="seat-snap-grid"
-                      x={grid ? grid.originX * canvas.width : 0}
-                      y={grid ? grid.originY * canvas.height : 0}
-                      width={(grid ? grid.pitchX : 0.05) * canvas.width}
-                      height={
-                        grid ? grid.pitchY * canvas.height : 0.05 * canvas.width
+                  <Tooltip
+                    title={
+                      grid
+                        ? `보정된 격자에 스냅 · 가로 ${(grid.pitchX * 100).toFixed(1)}% 세로 ${(grid.pitchY * 100).toFixed(1)}%`
+                        : "고정 간격에 스냅 · 도면 격자를 보정하면 실제 책상 간격을 따릅니다"
+                    }
+                  >
+                    <Chip
+                      size="small"
+                      icon={<GridOnRounded />}
+                      label={
+                        snapEnabled
+                          ? grid
+                            ? "도면 격자"
+                            : "격자 스냅"
+                          : "자유 이동"
                       }
-                      patternUnits="userSpaceOnUse"
-                    >
-                      <path
-                        d={`M ${(grid ? grid.pitchX : 0.05) * canvas.width} 0 L 0 0 0 ${grid ? grid.pitchY * canvas.height : 0.05 * canvas.width}`}
-                        fill="none"
-                        stroke={grid ? "#087E8B" : "#0E2D3E"}
-                        strokeWidth={grid ? 1.4 : 1}
-                        opacity={grid ? 0.34 : 0.16}
-                      />
-                    </pattern>
-                  </defs>
-                  <image
-                    href={currentMap.previewUrl}
-                    x="0"
-                    y="0"
-                    width={canvas.width}
-                    height={canvas.height}
-                    preserveAspectRatio="none"
-                    opacity=".92"
-                  />
-                  {editMode && snapEnabled && (
-                    <rect
-                      width={canvas.width}
-                      height={canvas.height}
-                      fill="url(#seat-snap-grid)"
-                      style={{ pointerEvents: "none" }}
+                      onClick={() => setSnapEnabled((value) => !value)}
+                      sx={{
+                        bgcolor: !snapEnabled
+                          ? "rgba(255,255,255,.12)"
+                          : grid
+                            ? "rgba(8,126,139,.4)"
+                            : "rgba(255,183,3,.22)",
+                        color: "white",
+                        fontWeight: 600,
+                        "& .MuiChip-icon": { color: "inherit" },
+                      }}
                     />
-                  )}
-                  {/* 조직 구역: 좌석에 지정된 구역의 경계 상자를 배경에 깐다. */}
-                  {zones.map((zone) => {
-                    const x = zone.minX * canvas.width - 6,
-                      y = zone.minY * canvas.height - 6,
-                      w = (zone.maxX - zone.minX) * canvas.width + 12,
-                      h = (zone.maxY - zone.minY) * canvas.height + 12;
-                    return (
-                      <g key={zone.id} style={{ pointerEvents: "none" }}>
-                        <rect
-                          x={x}
-                          y={y}
-                          width={w}
-                          height={h}
-                          rx="12"
-                          fill={zone.color}
-                          fillOpacity="0.08"
-                          stroke={zone.color}
-                          strokeWidth="1.6"
-                          strokeDasharray="8 5"
-                          strokeOpacity="0.55"
-                        />
-                        <text
-                          x={x + 8}
-                          y={y + 16}
-                          fontSize="12"
-                          fontWeight="700"
-                          fill={zone.color}
-                          opacity="0.85"
+                  </Tooltip>
+                  <Tooltip
+                    title={
+                      selectedIds.size > 1
+                        ? "선택한 좌석의 간격으로 도면 격자를 보정합니다"
+                        : "가로·세로로 떨어진 좌석을 2개 이상 선택하세요"
+                    }
+                  >
+                    <span>
+                      <IconButton
+                        size="small"
+                        disabled={selectedIds.size < 2 || moving}
+                        onClick={() => void calibrateGrid()}
+                        sx={{ color: "white" }}
+                        aria-label="선택 좌석으로 격자 보정"
+                      >
+                        <StraightenRounded />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                  <Tooltip
+                    title={
+                      grid
+                        ? selectedIds.size
+                          ? `선택한 ${selectedIds.size}개 좌석을 격자에 정렬`
+                          : "도면 전체 좌석을 격자에 정렬"
+                        : "먼저 도면 격자를 보정하세요"
+                    }
+                  >
+                    <span>
+                      <IconButton
+                        size="small"
+                        disabled={!grid || moving}
+                        onClick={() => void alignToGrid()}
+                        sx={{ color: "white" }}
+                        aria-label="격자에 정렬"
+                      >
+                        <AutoFixHighRounded />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                  {grid && (
+                    <Tooltip title="격자 보정 해제">
+                      <span>
+                        <IconButton
+                          size="small"
+                          disabled={moving}
+                          onClick={() => void clearGrid()}
+                          sx={{ color: "white" }}
+                          aria-label="격자 보정 해제"
                         >
-                          {`${zone.name} · ${zone.count}석`}
-                        </text>
-                      </g>
-                    );
-                  })}
-                  {seatLayer}
-                </svg>
+                          <GridOffRounded />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                  )}
+                  <Tooltip title="실행 취소 · Ctrl/⌘ Z">
+                    <span>
+                      <IconButton
+                        size="small"
+                        disabled={!undoStack.length || moving}
+                        onClick={() => void undo()}
+                        sx={{ color: "white" }}
+                      >
+                        <UndoRounded />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                  <Tooltip title="다시 실행 · Ctrl/⌘ Shift Z">
+                    <span>
+                      <IconButton
+                        size="small"
+                        disabled={!redoStack.length || moving}
+                        onClick={() => void redo()}
+                        sx={{ color: "white" }}
+                      >
+                        <RedoRounded />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                  <Typography
+                    variant="caption"
+                    sx={{ px: 0.7, whiteSpace: "nowrap" }}
+                  >
+                    {moving
+                      ? "저장 중…"
+                      : selectedIds.size
+                        ? `${selectedIds.size}개 선택`
+                        : "Shift로 다중 선택"}
+                  </Typography>
+                </Box>
               )}
-            </Box>
-            {/* 미니맵: 확대했을 때만 나타나 현재 보는 영역을 알려준다. */}
-            {(view.zoom > 1.05 || filters.size > 0 || activeOrg !== null) && (
               <Box
                 sx={{
                   position: "absolute",
+                  top: 12,
                   left: 12,
-                  bottom: 12,
                   zIndex: 2,
-                  width: 168,
-                  p: 0.75,
-                  bgcolor: "rgba(255,255,255,.94)",
+                  display: "flex",
+                  gap: 0.5,
+                  p: 0.5,
+                  alignItems: "center",
+                  bgcolor: "rgba(255,255,255,.92)",
                   backdropFilter: "blur(6px)",
-                  border: "1px solid rgba(14,45,62,.1)",
                   borderRadius: 2,
                   boxShadow: 2,
                 }}
               >
-                <svg
-                  viewBox={`0 0 ${canvas.width} ${canvas.height}`}
-                  role="img"
-                  aria-label="도면 전체 미니맵"
-                  style={{
-                    display: "block",
-                    width: "100%",
-                    background: "#F1F6F7",
-                    borderRadius: 6,
-                    cursor: "pointer",
-                  }}
-                  onPointerDown={(event) => {
-                    event.currentTarget.setPointerCapture(event.pointerId);
-                    moveViewToMinimap(event);
-                  }}
-                  onPointerMove={(event) => {
-                    // 버튼을 누른 채 끌면 화면이 따라온다.
-                    if (event.buttons === 1) moveViewToMinimap(event);
+                <Tooltip title="축소">
+                  <IconButton
+                    size="small"
+                    onClick={() => applyZoom(view.zoom / 1.35)}
+                  >
+                    <ZoomOutRounded />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title="전체 보기 (도면 맞춤)">
+                  <IconButton size="small" onClick={() => setView(FIT_VIEW)}>
+                    <CenterFocusStrongRounded />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title="확대">
+                  <IconButton
+                    size="small"
+                    onClick={() => applyZoom(view.zoom * 1.35)}
+                  >
+                    <ZoomInRounded />
+                  </IconButton>
+                </Tooltip>
+                <Typography
+                  variant="caption"
+                  fontWeight={700}
+                  sx={{
+                    px: 0.75,
+                    minWidth: 42,
+                    textAlign: "center",
+                    color: "text.secondary",
+                    fontVariantNumeric: "tabular-nums",
                   }}
                 >
-                  {minimapSeats}
-                  {/* 현재 화면 영역 */}
-                  <rect
-                    x={viewRect.x}
-                    y={viewRect.y}
-                    width={viewRect.width}
-                    height={viewRect.height}
-                    fill="none"
-                    stroke="#FFB703"
-                    strokeWidth={Math.max(4, canvas.width * 0.006)}
-                  />
-                </svg>
+                  {Math.round(view.zoom * 100)}%
+                </Typography>
               </Box>
-            )}
-            {/* 범례는 색상 기준을 따라간다. 조직 모드에서 상태 범례를 보여주면
-                화면의 색과 설명이 어긋나기 때문이다. */}
-            <Box
-              sx={{
-                position: "absolute",
-                right: 12,
-                bottom: 12,
-                display: "flex",
-                flexWrap: "wrap",
-                columnGap: 1.25,
-                rowGap: 0.5,
-                maxWidth: "calc(100% - 200px)",
-                maxHeight: 96,
-                overflowY: "auto",
-                bgcolor: "rgba(255,255,255,.94)",
-                backdropFilter: "blur(6px)",
-                border: "1px solid rgba(14,45,62,.1)",
-                borderRadius: 2,
-                boxShadow: 1,
-                px: 1.25,
-                py: 0.85,
-              }}
-            >
-              {colorMode === "organization" ? (
-                mapOrganizations.length ? (
-                  <>
-                    {mapOrganizations.map((org) => (
-                      <Stack
-                        key={org.id}
-                        direction="row"
-                        spacing={0.6}
-                        alignItems="center"
-                        onClick={() =>
-                          setActiveOrg((current) =>
-                            current === org.id ? null : org.id,
-                          )
+              {!currentMap.overlayReady && (
+                <Chip
+                  size="small"
+                  color="warning"
+                  label={
+                    currentMap.contentType === "application/pdf"
+                      ? "PDF 미리보기 없음 · 오버레이를 표시할 수 없습니다"
+                      : "도면 크기 정보 없음 · 좌석 정렬이 어긋날 수 있습니다"
+                  }
+                  sx={{
+                    position: "absolute",
+                    top: 12,
+                    right: 12,
+                    zIndex: 2,
+                    fontWeight: 600,
+                  }}
+                />
+              )}
+              <Box
+                ref={stageRef}
+                sx={{
+                  position: "absolute",
+                  inset: 0,
+                  overflow: "hidden",
+                  p: 2.5,
+                }}
+              >
+                {/* 오버레이 기준 래스터가 없을 때만 원본 뷰어로 물러난다. */}
+                {!currentMap.overlayReady ? (
+                  <Box
+                    sx={{ width: "100%", height: "100%", position: "relative" }}
+                  >
+                    <object
+                      data={currentMap.contentUrl}
+                      type={currentMap.contentType}
+                      width="100%"
+                      height="100%"
+                      aria-label="원본 도면"
+                    />
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        position: "absolute",
+                        bottom: 10,
+                        left: 10,
+                        bgcolor: "rgba(255,255,255,.94)",
+                        border: "1px solid rgba(14,45,62,.1)",
+                        borderRadius: 1.5,
+                        boxShadow: 1,
+                        px: 1.25,
+                        py: 0.5,
+                      }}
+                    >
+                      좌석 오버레이 기준 이미지를 준비하지 못했습니다. 도면을
+                      다시 업로드하거나 AI 분석을 실행해 주세요.
+                    </Typography>
+                  </Box>
+                ) : (
+                  <svg
+                    ref={attachStage}
+                    // 편집 모드에서는 좌석이 조작 대상이므로 단일 이미지로 묶지 않는다.
+                    role={editMode ? "group" : "img"}
+                    aria-label={`${currentMap.floorName} 좌석 배치도`}
+                    viewBox={viewBox}
+                    onDoubleClick={mapDoubleClick}
+                    onPointerMove={canvasPointerMove}
+                    onPointerUp={canvasPointerUp}
+                    onPointerCancel={canvasPointerUp}
+                    onPointerDown={canvasPointerDown}
+                    style={{
+                      display: "block",
+                      width: "100%",
+                      height: "100%",
+                      background: "#fff",
+                      borderRadius: 14,
+                      boxShadow: "0 10px 30px rgba(14,45,62,.14)",
+                      // 화면 이동과 확대를 직접 다루므로 브라우저 기본 제스처를 끈다.
+                      touchAction: "none",
+                      cursor: editMode
+                        ? "default"
+                        : panning
+                          ? "grabbing"
+                          : "grab",
+                    }}
+                  >
+                    <defs>
+                      {/* 보정된 격자가 있으면 그 간격과 원점을 그대로 그린다. */}
+                      <pattern
+                        id="seat-snap-grid"
+                        x={grid ? grid.originX * canvas.width : 0}
+                        y={grid ? grid.originY * canvas.height : 0}
+                        width={(grid ? grid.pitchX : 0.05) * canvas.width}
+                        height={
+                          grid
+                            ? grid.pitchY * canvas.height
+                            : 0.05 * canvas.width
                         }
-                        sx={{
-                          cursor: "pointer",
-                          opacity:
-                            activeOrg === null || activeOrg === org.id
-                              ? 1
-                              : 0.4,
-                        }}
+                        patternUnits="userSpaceOnUse"
                       >
-                        <Box
-                          sx={{
-                            width: 11,
-                            height: 11,
-                            borderRadius: 0.5,
-                            bgcolor: org.color,
-                            border: "1px solid rgba(14,45,62,.25)",
-                          }}
+                        <path
+                          d={`M ${(grid ? grid.pitchX : 0.05) * canvas.width} 0 L 0 0 0 ${grid ? grid.pitchY * canvas.height : 0.05 * canvas.width}`}
+                          fill="none"
+                          stroke={grid ? "#087E8B" : "#0E2D3E"}
+                          strokeWidth={grid ? 1.4 : 1}
+                          opacity={grid ? 0.34 : 0.16}
                         />
-                        <Typography
-                          variant="caption"
-                          sx={{ whiteSpace: "nowrap" }}
-                          fontWeight={activeOrg === org.id ? 700 : 400}
-                        >
-                          {`${org.name} ${org.count}`}
-                        </Typography>
-                      </Stack>
-                    ))}
-                    {activeOrg !== null && (
-                      <Chip
-                        size="small"
-                        label="강조 해제"
-                        variant="outlined"
-                        onClick={() => setActiveOrg(null)}
+                      </pattern>
+                    </defs>
+                    <image
+                      href={currentMap.previewUrl}
+                      x="0"
+                      y="0"
+                      width={canvas.width}
+                      height={canvas.height}
+                      preserveAspectRatio="none"
+                      opacity=".92"
+                    />
+                    {editMode && snapEnabled && (
+                      <rect
+                        width={canvas.width}
+                        height={canvas.height}
+                        fill="url(#seat-snap-grid)"
+                        style={{ pointerEvents: "none" }}
                       />
                     )}
-                  </>
-                ) : (
-                  <Typography variant="caption" color="text.secondary">
-                    조직이 지정된 좌석이 없습니다
-                  </Typography>
-                )
-              ) : (
-                [
-                  { color: "#087E8B", label: "배정", dashed: false },
-                  { color: "#FFFFFF", label: "빈 좌석", dashed: false },
-                  { color: "#3478C8", label: "공용", dashed: false },
-                  { color: "#8796A1", label: "사용불가", dashed: false },
-                  { color: "#FFFFFF", label: "검토 필요", dashed: true },
-                  {
-                    color: "#FFFFFF",
-                    label: "구역 불일치",
-                    dashed: true,
-                    tone: "#C1436D",
-                  },
-                ].map(({ color, label, dashed, tone }) => (
-                  <Stack
-                    key={label}
-                    direction="row"
-                    spacing={0.6}
-                    alignItems="center"
+                    {/* 조직 구역: 좌석에 지정된 구역의 경계 상자를 배경에 깐다. */}
+                    {zones.map((zone) => {
+                      const x = zone.minX * canvas.width - 6,
+                        y = zone.minY * canvas.height - 6,
+                        w = (zone.maxX - zone.minX) * canvas.width + 12,
+                        h = (zone.maxY - zone.minY) * canvas.height + 12;
+                      return (
+                        <g key={zone.id} style={{ pointerEvents: "none" }}>
+                          <rect
+                            x={x}
+                            y={y}
+                            width={w}
+                            height={h}
+                            rx="12"
+                            fill={zone.color}
+                            fillOpacity="0.08"
+                            stroke={zone.color}
+                            strokeWidth="1.6"
+                            strokeDasharray="8 5"
+                            strokeOpacity="0.55"
+                          />
+                          <text
+                            x={x + 8}
+                            y={y + 16}
+                            fontSize="12"
+                            fontWeight="700"
+                            fill={zone.color}
+                            opacity="0.85"
+                          >
+                            {`${zone.name} · ${zone.count}석`}
+                          </text>
+                        </g>
+                      );
+                    })}
+                    {seatLayer}
+                  </svg>
+                )}
+              </Box>
+              {/* 미니맵: 확대했을 때만 나타나 현재 보는 영역을 알려준다. */}
+              {(view.zoom > 1.05 || filters.size > 0 || activeOrg !== null) && (
+                <Box
+                  sx={{
+                    position: "absolute",
+                    left: 12,
+                    bottom: 12,
+                    zIndex: 2,
+                    width: 168,
+                    p: 0.75,
+                    bgcolor: "rgba(255,255,255,.94)",
+                    backdropFilter: "blur(6px)",
+                    border: "1px solid rgba(14,45,62,.1)",
+                    borderRadius: 2,
+                    boxShadow: 2,
+                  }}
+                >
+                  <svg
+                    viewBox={`0 0 ${canvas.width} ${canvas.height}`}
+                    role="img"
+                    aria-label="도면 전체 미니맵"
+                    style={{
+                      display: "block",
+                      width: "100%",
+                      background: "#F1F6F7",
+                      borderRadius: 6,
+                      cursor: "pointer",
+                    }}
+                    onPointerDown={(event) => {
+                      event.currentTarget.setPointerCapture(event.pointerId);
+                      moveViewToMinimap(event);
+                    }}
+                    onPointerMove={(event) => {
+                      // 버튼을 누른 채 끌면 화면이 따라온다.
+                      if (event.buttons === 1) moveViewToMinimap(event);
+                    }}
                   >
-                    <Box
-                      sx={{
-                        width: 11,
-                        height: 11,
-                        borderRadius: 0.5,
-                        bgcolor: color,
-                        border: dashed
-                          ? `1.5px dashed ${tone ?? "#E79418"}`
-                          : "1px solid #8796A1",
-                      }}
+                    {minimapSeats}
+                    {/* 현재 화면 영역 */}
+                    <rect
+                      x={viewRect.x}
+                      y={viewRect.y}
+                      width={viewRect.width}
+                      height={viewRect.height}
+                      fill="none"
+                      stroke="#FFB703"
+                      strokeWidth={Math.max(4, canvas.width * 0.006)}
                     />
-                    <Typography variant="caption" sx={{ whiteSpace: "nowrap" }}>
-                      {label}
-                    </Typography>
-                  </Stack>
-                ))
+                  </svg>
+                </Box>
               )}
+              {/* 범례는 색상 기준을 따라간다. 조직 모드에서 상태 범례를 보여주면
+                  화면의 색과 설명이 어긋나기 때문이다. */}
+              <Box
+                sx={{
+                  position: "absolute",
+                  right: 12,
+                  bottom: 12,
+                  display: "flex",
+                  flexWrap: "wrap",
+                  columnGap: 1.25,
+                  rowGap: 0.5,
+                  maxWidth: "calc(100% - 200px)",
+                  maxHeight: 96,
+                  overflowY: "auto",
+                  bgcolor: "rgba(255,255,255,.94)",
+                  backdropFilter: "blur(6px)",
+                  border: "1px solid rgba(14,45,62,.1)",
+                  borderRadius: 2,
+                  boxShadow: 1,
+                  px: 1.25,
+                  py: 0.85,
+                }}
+              >
+                {colorMode === "organization" ? (
+                  mapOrganizations.length ? (
+                    <>
+                      {mapOrganizations.map((org) => (
+                        <Stack
+                          key={org.id}
+                          direction="row"
+                          spacing={0.6}
+                          alignItems="center"
+                          onClick={() =>
+                            setActiveOrg((current) =>
+                              current === org.id ? null : org.id,
+                            )
+                          }
+                          sx={{
+                            cursor: "pointer",
+                            opacity:
+                              activeOrg === null || activeOrg === org.id
+                                ? 1
+                                : 0.4,
+                          }}
+                        >
+                          <Box
+                            sx={{
+                              width: 11,
+                              height: 11,
+                              borderRadius: 0.5,
+                              bgcolor: org.color,
+                              border: "1px solid rgba(14,45,62,.25)",
+                            }}
+                          />
+                          <Typography
+                            variant="caption"
+                            sx={{ whiteSpace: "nowrap" }}
+                            fontWeight={activeOrg === org.id ? 700 : 400}
+                          >
+                            {`${org.name} ${org.count}`}
+                          </Typography>
+                        </Stack>
+                      ))}
+                      {activeOrg !== null && (
+                        <Chip
+                          size="small"
+                          label="강조 해제"
+                          variant="outlined"
+                          onClick={() => setActiveOrg(null)}
+                        />
+                      )}
+                    </>
+                  ) : (
+                    <Typography variant="caption" color="text.secondary">
+                      조직이 지정된 좌석이 없습니다
+                    </Typography>
+                  )
+                ) : (
+                  [
+                    { color: "#087E8B", label: "배정", dashed: false },
+                    { color: "#FFFFFF", label: "빈 좌석", dashed: false },
+                    { color: "#3478C8", label: "공용", dashed: false },
+                    { color: "#8796A1", label: "사용불가", dashed: false },
+                    { color: "#FFFFFF", label: "검토 필요", dashed: true },
+                    {
+                      color: "#FFFFFF",
+                      label: "구역 불일치",
+                      dashed: true,
+                      tone: "#C1436D",
+                    },
+                  ].map(({ color, label, dashed, tone }) => (
+                    <Stack
+                      key={label}
+                      direction="row"
+                      spacing={0.6}
+                      alignItems="center"
+                    >
+                      <Box
+                        sx={{
+                          width: 11,
+                          height: 11,
+                          borderRadius: 0.5,
+                          bgcolor: color,
+                          border: dashed
+                            ? `1.5px dashed ${tone ?? "#E79418"}`
+                            : "1px solid #8796A1",
+                        }}
+                      />
+                      <Typography
+                        variant="caption"
+                        sx={{ whiteSpace: "nowrap" }}
+                      >
+                        {label}
+                      </Typography>
+                    </Stack>
+                  ))
+                )}
+              </Box>
             </Box>
           </Paper>
           <Paper sx={{ p: 2.5, minHeight: { xs: 220, lg: 0 } }}>
