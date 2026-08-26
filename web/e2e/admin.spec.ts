@@ -25,6 +25,12 @@ test.describe("관리 화면", () => {
     await page.goto("/admin/maps");
     await expect(page.getByText("본사 · 3층")).toBeVisible();
     await expect(page.getByText("게시 중")).toBeVisible();
+    // 준비 단계는 끝난 것만 완료로 표시해야 한다. 처음 설치한 관리자가 아직
+    // 하지 않은 단계까지 체크로 읽은 적이 있다.
+    for (const step of ["1. 사업장", "3. 도면", "5. 게시"]) {
+      await expect(page.getByLabel(`${step} · 완료`)).toBeVisible();
+    }
+    await expect(page.getByLabel(/다음 할 일$/)).toHaveCount(0);
     expect(problems()).toHaveLength(0);
   });
 
