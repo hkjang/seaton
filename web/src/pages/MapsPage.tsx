@@ -17,6 +17,7 @@ import {
   MenuItem,
   Paper,
   Select,
+  Skeleton,
   Stack,
   TextField,
   Typography,
@@ -49,6 +50,7 @@ export function MapsPage() {
     [selectedMap, setSelectedMap] = useState(""),
     [message, setMessage] = useState(""),
     [warnings, setWarnings] = useState<string[]>([]),
+    [loading, setLoading] = useState(true),
     [analyzing, setAnalyzing] = useState<Record<string, string>>({}),
     [error, setError] = useState("");
   const load = async () => {
@@ -65,6 +67,8 @@ export function MapsPage() {
       setError(
         e instanceof Error ? e.message : "도면 정보를 불러오지 못했습니다",
       );
+    } finally {
+      setLoading(false);
     }
   };
   useEffect(() => {
@@ -238,7 +242,15 @@ export function MapsPage() {
           ))}
         </Stack>
       </Paper>
-      {maps.length === 0 ? (
+      {loading ? (
+        <Grid container spacing={2}>
+          {[1, 2, 3].map((item) => (
+            <Grid key={item} size={{ xs: 12, md: 6, lg: 4 }}>
+              <Skeleton variant="rounded" height={280} />
+            </Grid>
+          ))}
+        </Grid>
+      ) : maps.length === 0 ? (
         <Paper
           sx={{
             p: 6,

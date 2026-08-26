@@ -29,7 +29,7 @@ import PersonOffRounded from "@mui/icons-material/PersonOffRounded";
 import ArrowForwardRounded from "@mui/icons-material/ArrowForwardRounded";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
-import { MetricCard, PageHeader } from "../components/AdminUI";
+import { MetricCard, PageHeader, TableSkeleton } from "../components/AdminUI";
 import type { Employee } from "../types";
 
 export function EmployeesPage() {
@@ -231,94 +231,102 @@ export function EmployeesPage() {
           </Button>
         </Stack>
       </Paper>
-      <TableContainer component={Paper}>
-        <Table>
-          <TableHead>
-            <TableRow>
-              <TableCell>직원</TableCell>
-              <TableCell>사번</TableCell>
-              <TableCell>조직</TableCell>
-              <TableCell>직책/직급</TableCell>
-              <TableCell>좌석</TableCell>
-              <TableCell>상태</TableCell>
-              <TableCell align="right">작업</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {!loading && items.length === 0 && (
+      {loading ? (
+        <TableSkeleton rows={8} />
+      ) : (
+        <TableContainer component={Paper}>
+          <Table>
+            <TableHead>
               <TableRow>
-                <TableCell colSpan={7} align="center" sx={{ py: 7 }}>
-                  <Typography fontWeight={700}>
-                    조건에 맞는 직원이 없습니다.
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    검색어 또는 필터를 변경해 보세요.
-                  </Typography>
-                </TableCell>
+                <TableCell>직원</TableCell>
+                <TableCell>사번</TableCell>
+                <TableCell>조직</TableCell>
+                <TableCell>직책/직급</TableCell>
+                <TableCell>좌석</TableCell>
+                <TableCell>상태</TableCell>
+                <TableCell align="right">작업</TableCell>
               </TableRow>
-            )}
-            {items.map((employee) => (
-              <TableRow key={employee.id} hover>
-                <TableCell>
-                  <Stack direction="row" spacing={1.2} alignItems="center">
-                    <Avatar
-                      sx={{
-                        width: 36,
-                        height: 36,
-                        bgcolor: employee.seatId ? "primary.main" : "grey.400",
-                        fontSize: 13,
-                      }}
+            </TableHead>
+            <TableBody>
+              {items.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={7} align="center" sx={{ py: 7 }}>
+                    <Typography fontWeight={700}>
+                      조건에 맞는 직원이 없습니다.
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      검색어 또는 필터를 변경해 보세요.
+                    </Typography>
+                  </TableCell>
+                </TableRow>
+              )}
+              {items.map((employee) => (
+                <TableRow key={employee.id} hover>
+                  <TableCell>
+                    <Stack direction="row" spacing={1.2} alignItems="center">
+                      <Avatar
+                        sx={{
+                          width: 36,
+                          height: 36,
+                          bgcolor: employee.seatId
+                            ? "primary.main"
+                            : "grey.400",
+                          fontSize: 13,
+                        }}
+                      >
+                        {employee.name.slice(0, 1)}
+                      </Avatar>
+                      <Box>
+                        <Typography variant="body2" fontWeight={700}>
+                          {employee.name}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {employee.email}
+                        </Typography>
+                      </Box>
+                    </Stack>
+                  </TableCell>
+                  <TableCell>{employee.employeeNo}</TableCell>
+                  <TableCell>{employee.organizationName || "-"}</TableCell>
+                  <TableCell>
+                    {[employee.position, employee.title]
+                      .filter(Boolean)
+                      .join(" · ") || "-"}
+                  </TableCell>
+                  <TableCell>
+                    <Chip
+                      size="small"
+                      variant={employee.seatNo ? "filled" : "outlined"}
+                      color={employee.seatNo ? "primary" : "warning"}
+                      label={employee.seatNo || "미배정"}
+                    />
+                  </TableCell>
+                  <TableCell>
+                    {employee.status === "active"
+                      ? "재직"
+                      : employee.status === "leave"
+                        ? "휴직"
+                        : "퇴직"}
+                  </TableCell>
+                  <TableCell align="right">
+                    <Button
+                      size="small"
+                      endIcon={<ArrowForwardRounded />}
+                      onClick={() =>
+                        navigate(
+                          `/?q=${encodeURIComponent(employee.employeeNo)}`,
+                        )
+                      }
                     >
-                      {employee.name.slice(0, 1)}
-                    </Avatar>
-                    <Box>
-                      <Typography variant="body2" fontWeight={700}>
-                        {employee.name}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {employee.email}
-                      </Typography>
-                    </Box>
-                  </Stack>
-                </TableCell>
-                <TableCell>{employee.employeeNo}</TableCell>
-                <TableCell>{employee.organizationName || "-"}</TableCell>
-                <TableCell>
-                  {[employee.position, employee.title]
-                    .filter(Boolean)
-                    .join(" · ") || "-"}
-                </TableCell>
-                <TableCell>
-                  <Chip
-                    size="small"
-                    variant={employee.seatNo ? "filled" : "outlined"}
-                    color={employee.seatNo ? "primary" : "warning"}
-                    label={employee.seatNo || "미배정"}
-                  />
-                </TableCell>
-                <TableCell>
-                  {employee.status === "active"
-                    ? "재직"
-                    : employee.status === "leave"
-                      ? "휴직"
-                      : "퇴직"}
-                </TableCell>
-                <TableCell align="right">
-                  <Button
-                    size="small"
-                    endIcon={<ArrowForwardRounded />}
-                    onClick={() =>
-                      navigate(`/?q=${encodeURIComponent(employee.employeeNo)}`)
-                    }
-                  >
-                    {employee.seatNo ? "지도에서 보기" : "좌석 배정"}
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </TableContainer>
+                      {employee.seatNo ? "지도에서 보기" : "좌석 배정"}
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      )}
       <Typography
         variant="caption"
         color="text.secondary"

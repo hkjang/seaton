@@ -10,9 +10,10 @@ func (s *Server) openAPI(w http.ResponseWriter, _ *http.Request) {
 		"components": map[string]any{"securitySchemes": map[string]any{"bearerApiKey": map[string]string{"type": "http", "scheme": "bearer", "bearerFormat": "SeatOn personal API key"}, "cookieSession": map[string]string{"type": "apiKey", "in": "cookie", "name": sessionCookie}}},
 		"security":   []map[string]any{{"bearerApiKey": []string{}}, {"cookieSession": []string{}}},
 		"paths": map[string]any{
-			"/version":          map[string]any{"get": operation("서비스 버전 조회", false)},
-			"/dashboard":        map[string]any{"get": operation("관리자 운영 요약", true)},
-			"/dashboard/issues": map[string]any{"get": operation("처리 필요 상세 목록", true)},
+			"/version":                map[string]any{"get": operation("서비스 버전 조회", false)},
+			"/dashboard":              map[string]any{"get": operation("관리자 운영 요약", true)},
+			"/dashboard/action-count": map[string]any{"get": operation("처리 필요 건수만 집계 (상단 배지용)", true)},
+			"/dashboard/issues":       map[string]any{"get": operation("처리 필요 상세 목록", true)},
 			"/dashboard/issues/{kind}/{issueID}/resolve": map[string]any{"post": operation("처리 필요 항목 즉시 조치", true)},
 			"/employees":                      map[string]any{"get": operation("직원 검색", true), "post": operation("직원 등록/갱신", true)},
 			"/organizations":                  map[string]any{"get": operation("조직 조회", true), "post": operation("조직 등록/갱신", true)},

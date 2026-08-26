@@ -10,6 +10,7 @@ import {
   FormControl,
   FormControlLabel,
   Grid,
+  Skeleton,
   InputLabel,
   MenuItem,
   Select,
@@ -154,6 +155,7 @@ export function SettingsPage() {
     [saving, setSaving] = useState(false),
     [currentPassword, setCurrentPassword] = useState(""),
     [testingVLM, setTestingVLM] = useState(false),
+    [loading, setLoading] = useState(true),
     [newPassword, setNewPassword] = useState("");
 
   const load = async () => {
@@ -163,6 +165,8 @@ export function SettingsPage() {
       setValues(Object.fromEntries(data.items.map((x) => [x.key, x.value])));
     } catch (e) {
       setError(e instanceof Error ? e.message : "설정을 불러오지 못했습니다");
+    } finally {
+      setLoading(false);
     }
   };
   useEffect(() => {
@@ -316,200 +320,227 @@ export function SettingsPage() {
           {error}
         </Alert>
       )}
-      <Card>
-        <Stack
-          direction={{ xs: "column", sm: "row" }}
-          spacing={1}
-          sx={{ px: 2.5, pt: 2 }}
-        >
-          <Chip
-            size="small"
-            color={values["oidc.enabled"] === "true" ? "success" : "default"}
-            variant="outlined"
-            label={`Keycloak ${values["oidc.enabled"] === "true" ? "활성" : "비활성"}`}
-          />
-          <Chip
-            size="small"
-            color={values["hr.sync_enabled"] === "true" ? "success" : "default"}
-            variant="outlined"
-            label={`인사 동기화 ${values["hr.sync_enabled"] === "true" ? "활성" : "비활성"}`}
-          />
-          <Chip
-            size="small"
-            color={engine === "cv" ? "default" : "info"}
-            variant="outlined"
-            label={
-              engine === "cv"
-                ? "오프라인 CV 엔진"
-                : engine === "vlm"
-                  ? "VLM 엔진"
-                  : "CV + VLM 하이브리드"
-            }
-          />
-        </Stack>
-        <Tabs
-          value={tab}
-          onChange={(_, v) => setTab(v)}
-          variant="scrollable"
-          sx={{ px: 2, borderBottom: "1px solid #E3EAEE" }}
-        >
-          <Tab value="general" label="일반" />
-          <Tab value="oidc" label="Keycloak SSO" />
-          <Tab value="security" label="보안 · 키" />
-          <Tab value="ai" label="AI 분석" />
-          <Tab value="hr" label="인사 연동" />
-        </Tabs>
-        <CardContent sx={{ p: { xs: 2, md: 4 } }}>
-          {tab === "oidc" && (
-            <>
-              <Stack direction={{ xs: "column", sm: "row" }} spacing={2} mb={3}>
-                {switchValue("oidc.enabled")}
-                {switchValue("auth.local_enabled")}
-                {switchValue("oidc.auto_provision")}
-              </Stack>
-              <Alert severity="info" sx={{ mb: 3 }}>
-                Keycloak Client의 Valid Redirect URI에{" "}
-                <strong>
-                  {window.location.origin}/api/v1/auth/oidc/callback
-                </strong>{" "}
-                을 등록하세요. Client authentication은 ON으로 설정합니다.
-              </Alert>
-            </>
-          )}
-          {tab === "hr" && <Box mb={3}>{switchValue("hr.sync_enabled")}</Box>}
-          {tab === "ai" && (
-            <Box mb={3}>
-              <FormControl sx={{ minWidth: 280 }}>
-                <InputLabel id="ai-engine-label">좌석 인식 엔진</InputLabel>
-                <Select
-                  labelId="ai-engine-label"
-                  label="좌석 인식 엔진"
-                  value={engine}
-                  onChange={(e) =>
-                    setValues((v) => ({ ...v, "ai.engine": e.target.value }))
-                  }
-                >
-                  <MenuItem value="cv">
-                    오프라인 CV 전용 (외부 통신 없음)
-                  </MenuItem>
-                  <MenuItem value="vlm">비전 모델(VLM) 전용</MenuItem>
-                  <MenuItem value="hybrid">
-                    하이브리드 · CV + VLM 교차 검증
-                  </MenuItem>
-                </Select>
-              </FormControl>
-            </Box>
-          )}
-          <Grid container spacing={2.5}>
-            {fields[tab].map((f) => (
-              <Grid key={f.key} size={{ xs: 12, md: 6 }}>
-                <TextField
-                  fullWidth
-                  label={f.label}
-                  type={f.secret ? "password" : f.type || "text"}
-                  value={values[f.key] ?? ""}
-                  onChange={(e) =>
-                    setValues((v) => ({ ...v, [f.key]: e.target.value }))
-                  }
-                  helperText={
-                    f.help ||
-                    (f.secret && configured[f.key]
-                      ? "암호화되어 저장되어 있습니다. 변경할 때만 새 값을 입력하세요."
-                      : " ")
-                  }
-                />
-              </Grid>
-            ))}
-          </Grid>
-          {tab === "ai" && (
-            <Alert
-              severity={engine === "cv" ? "info" : "warning"}
-              sx={{ mt: 2 }}
-            >
-              {engine === "cv"
-                ? "오프라인 CV 엔진만 사용합니다. 외부 통신이 전혀 없고 결과가 항상 재현됩니다."
-                : engine === "vlm"
-                  ? "비전 모델 판독 결과는 보정되지 않은 값이므로 신뢰도가 자동 승인선을 넘지 않도록 제한되며, 모든 좌석이 검토 대상으로 남습니다. VLM 호출이 실패하면 CV 결과로 자동 대체됩니다."
-                  : "CV와 VLM 결과를 IoU로 교차 검증합니다. 두 엔진이 합의한 좌석만 자동 승인 구간으로 올라가고, 한쪽만 찾은 좌석은 검토 대상이 됩니다. VLM이 실패해도 CV 결과로 분석은 완료됩니다. 도면 종류에 따라 CV 단독보다 나쁠 수 있으니 대표 도면으로 두 엔진을 비교한 뒤 선택하세요."}
-            </Alert>
-          )}
-          {tab === "security" && (
-            <Box sx={{ mt: 3 }}>
-              <Divider sx={{ mb: 3 }} />
-              <Typography variant="h6">내 로컬 관리자 비밀번호</Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                SSO 계정은 Keycloak에서 변경합니다. 변경 시 현재 세션을 제외한
-                다른 세션이 종료됩니다.
-              </Typography>
-              <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
-                <TextField
-                  type="password"
-                  label="현재 비밀번호"
-                  value={currentPassword}
-                  onChange={(e) => setCurrentPassword(e.target.value)}
-                />
-                <TextField
-                  type="password"
-                  label="새 비밀번호 (12자 이상)"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                />
-                <Button
-                  variant="outlined"
-                  disabled={!currentPassword || newPassword.length < 12}
-                  onClick={() => void changePassword()}
-                >
-                  비밀번호 변경
-                </Button>
-              </Stack>
-            </Box>
-          )}
-          <Divider sx={{ my: 3 }} />
+      {loading ? (
+        // 불러오기 전 빈 폼을 보여주면, 그 사이 입력한 값이 응답이 도착하는
+        // 순간 덮어써진다. 값이 준비될 때까지 자리만 잡아 둔다.
+        <Card>
+          <CardContent sx={{ p: { xs: 2, md: 4 } }}>
+            <Skeleton height={48} sx={{ mb: 2 }} />
+            <Grid container spacing={2.5}>
+              {[1, 2, 3, 4, 5, 6].map((item) => (
+                <Grid key={item} size={{ xs: 12, md: 6 }}>
+                  <Skeleton variant="rounded" height={56} />
+                </Grid>
+              ))}
+            </Grid>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card>
           <Stack
-            direction={{ xs: "column-reverse", sm: "row" }}
-            justifyContent="flex-end"
+            direction={{ xs: "column", sm: "row" }}
             spacing={1}
-            sx={{
-              position: "sticky",
-              bottom: 0,
-              bgcolor: "background.paper",
-              py: 1,
-              zIndex: 1,
-            }}
+            sx={{ px: 2.5, pt: 2 }}
           >
-            {tab === "hr" && (
-              <Button
-                startIcon={<LinkRounded />}
-                onClick={() => void syncNow()}
-              >
-                저장 후 지금 동기화
-              </Button>
-            )}
-            {tab === "oidc" && (
-              <Button startIcon={<LinkRounded />} onClick={() => void test()}>
-                저장 후 연결 테스트
-              </Button>
-            )}
-            {tab === "ai" && engine !== "cv" && (
-              <Button
-                startIcon={<LinkRounded />}
-                disabled={testingVLM}
-                onClick={() => void testVLMConnection()}
-              >
-                {testingVLM ? "시험 도면 판독 중…" : "저장 후 VLM 연결 시험"}
-              </Button>
-            )}
-            <Button
-              variant="contained"
-              startIcon={<SaveRounded />}
-              disabled={!dirty || saving}
-              onClick={() => void save()}
-            >
-              {saving ? "저장 중…" : "설정 저장"}
-            </Button>
+            <Chip
+              size="small"
+              color={values["oidc.enabled"] === "true" ? "success" : "default"}
+              variant="outlined"
+              label={`Keycloak ${values["oidc.enabled"] === "true" ? "활성" : "비활성"}`}
+            />
+            <Chip
+              size="small"
+              color={
+                values["hr.sync_enabled"] === "true" ? "success" : "default"
+              }
+              variant="outlined"
+              label={`인사 동기화 ${values["hr.sync_enabled"] === "true" ? "활성" : "비활성"}`}
+            />
+            <Chip
+              size="small"
+              color={engine === "cv" ? "default" : "info"}
+              variant="outlined"
+              label={
+                engine === "cv"
+                  ? "오프라인 CV 엔진"
+                  : engine === "vlm"
+                    ? "VLM 엔진"
+                    : "CV + VLM 하이브리드"
+              }
+            />
           </Stack>
-        </CardContent>
-      </Card>
+          <Tabs
+            value={tab}
+            onChange={(_, v) => setTab(v)}
+            variant="scrollable"
+            sx={{ px: 2, borderBottom: "1px solid #E3EAEE" }}
+          >
+            <Tab value="general" label="일반" />
+            <Tab value="oidc" label="Keycloak SSO" />
+            <Tab value="security" label="보안 · 키" />
+            <Tab value="ai" label="AI 분석" />
+            <Tab value="hr" label="인사 연동" />
+          </Tabs>
+          <CardContent sx={{ p: { xs: 2, md: 4 } }}>
+            {tab === "oidc" && (
+              <>
+                <Stack
+                  direction={{ xs: "column", sm: "row" }}
+                  spacing={2}
+                  mb={3}
+                >
+                  {switchValue("oidc.enabled")}
+                  {switchValue("auth.local_enabled")}
+                  {switchValue("oidc.auto_provision")}
+                </Stack>
+                <Alert severity="info" sx={{ mb: 3 }}>
+                  Keycloak Client의 Valid Redirect URI에{" "}
+                  <strong>
+                    {window.location.origin}/api/v1/auth/oidc/callback
+                  </strong>{" "}
+                  을 등록하세요. Client authentication은 ON으로 설정합니다.
+                </Alert>
+              </>
+            )}
+            {tab === "hr" && <Box mb={3}>{switchValue("hr.sync_enabled")}</Box>}
+            {tab === "ai" && (
+              <Box mb={3}>
+                <FormControl sx={{ minWidth: 280 }}>
+                  <InputLabel id="ai-engine-label">좌석 인식 엔진</InputLabel>
+                  <Select
+                    labelId="ai-engine-label"
+                    label="좌석 인식 엔진"
+                    value={engine}
+                    onChange={(e) =>
+                      setValues((v) => ({ ...v, "ai.engine": e.target.value }))
+                    }
+                  >
+                    <MenuItem value="cv">
+                      오프라인 CV 전용 (외부 통신 없음)
+                    </MenuItem>
+                    <MenuItem value="vlm">비전 모델(VLM) 전용</MenuItem>
+                    <MenuItem value="hybrid">
+                      하이브리드 · CV + VLM 교차 검증
+                    </MenuItem>
+                  </Select>
+                </FormControl>
+              </Box>
+            )}
+            <Grid container spacing={2.5}>
+              {fields[tab].map((f) => (
+                <Grid key={f.key} size={{ xs: 12, md: 6 }}>
+                  <TextField
+                    fullWidth
+                    label={f.label}
+                    type={f.secret ? "password" : f.type || "text"}
+                    value={values[f.key] ?? ""}
+                    onChange={(e) =>
+                      setValues((v) => ({ ...v, [f.key]: e.target.value }))
+                    }
+                    helperText={
+                      f.help ||
+                      (f.secret && configured[f.key]
+                        ? "암호화되어 저장되어 있습니다. 변경할 때만 새 값을 입력하세요."
+                        : " ")
+                    }
+                  />
+                </Grid>
+              ))}
+            </Grid>
+            {tab === "ai" && (
+              <Alert
+                severity={engine === "cv" ? "info" : "warning"}
+                sx={{ mt: 2 }}
+              >
+                {engine === "cv"
+                  ? "오프라인 CV 엔진만 사용합니다. 외부 통신이 전혀 없고 결과가 항상 재현됩니다."
+                  : engine === "vlm"
+                    ? "비전 모델 판독 결과는 보정되지 않은 값이므로 신뢰도가 자동 승인선을 넘지 않도록 제한되며, 모든 좌석이 검토 대상으로 남습니다. VLM 호출이 실패하면 CV 결과로 자동 대체됩니다."
+                    : "CV와 VLM 결과를 IoU로 교차 검증합니다. 두 엔진이 합의한 좌석만 자동 승인 구간으로 올라가고, 한쪽만 찾은 좌석은 검토 대상이 됩니다. VLM이 실패해도 CV 결과로 분석은 완료됩니다. 도면 종류에 따라 CV 단독보다 나쁠 수 있으니 대표 도면으로 두 엔진을 비교한 뒤 선택하세요."}
+              </Alert>
+            )}
+            {tab === "security" && (
+              <Box sx={{ mt: 3 }}>
+                <Divider sx={{ mb: 3 }} />
+                <Typography variant="h6">내 로컬 관리자 비밀번호</Typography>
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ mb: 2 }}
+                >
+                  SSO 계정은 Keycloak에서 변경합니다. 변경 시 현재 세션을 제외한
+                  다른 세션이 종료됩니다.
+                </Typography>
+                <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+                  <TextField
+                    type="password"
+                    label="현재 비밀번호"
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                  />
+                  <TextField
+                    type="password"
+                    label="새 비밀번호 (12자 이상)"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                  />
+                  <Button
+                    variant="outlined"
+                    disabled={!currentPassword || newPassword.length < 12}
+                    onClick={() => void changePassword()}
+                  >
+                    비밀번호 변경
+                  </Button>
+                </Stack>
+              </Box>
+            )}
+            <Divider sx={{ my: 3 }} />
+            <Stack
+              direction={{ xs: "column-reverse", sm: "row" }}
+              justifyContent="flex-end"
+              spacing={1}
+              sx={{
+                position: "sticky",
+                bottom: 0,
+                bgcolor: "background.paper",
+                py: 1,
+                zIndex: 1,
+              }}
+            >
+              {tab === "hr" && (
+                <Button
+                  startIcon={<LinkRounded />}
+                  onClick={() => void syncNow()}
+                >
+                  저장 후 지금 동기화
+                </Button>
+              )}
+              {tab === "oidc" && (
+                <Button startIcon={<LinkRounded />} onClick={() => void test()}>
+                  저장 후 연결 테스트
+                </Button>
+              )}
+              {tab === "ai" && engine !== "cv" && (
+                <Button
+                  startIcon={<LinkRounded />}
+                  disabled={testingVLM}
+                  onClick={() => void testVLMConnection()}
+                >
+                  {testingVLM ? "시험 도면 판독 중…" : "저장 후 VLM 연결 시험"}
+                </Button>
+              )}
+              <Button
+                variant="contained"
+                startIcon={<SaveRounded />}
+                disabled={!dirty || saving}
+                onClick={() => void save()}
+              >
+                {saving ? "저장 중…" : "설정 저장"}
+              </Button>
+            </Stack>
+          </CardContent>
+        </Card>
+      )}
       <Stack direction="row" spacing={1} mt={2}>
         <Chip label="비밀값 AES-256-GCM 암호화" variant="outlined" />
         <Chip label="설정 변경 감사로그" variant="outlined" />
