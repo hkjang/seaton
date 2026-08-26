@@ -30,7 +30,7 @@ import ArrowForwardRounded from "@mui/icons-material/ArrowForwardRounded";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { MetricCard, PageHeader, TableSkeleton } from "../components/AdminUI";
-import type { Employee } from "../types";
+import type { BulkFailure, Employee } from "../types";
 
 export function EmployeesPage() {
   const navigate = useNavigate();
@@ -84,6 +84,40 @@ export function EmployeesPage() {
       setError(e instanceof Error ? e.message : "가져오기에 실패했습니다");
     }
   };
+  // 좌석 일괄 배정. 서버는 사번과 좌석 번호 두 열만 읽고, 실패한 행은 이유와 함께
+  // 돌려준다. 어느 행이 왜 걸렸는지 보여 주지 않으면 관리자가 파일을 고칠 수 없다.
+  const [failures, setFailures] = useState<BulkFailure[]>([]);
+  const assignFromFile = async (file?: File) => {
+    if (!file) return;
+    const form = new FormData();
+    form.append("file", file);
+    setFailures([]);
+    try {
+      const result = await api<{
+        success: number;
+        failed: number;
+        failures?: BulkFailure[];
+      }>("/api/v1/seat-assignments/bulk", { method: "POST", body: form });
+      setMessage(
+        `${result.success}건 배정, ${result.failed}건 확인 필요`.concat(
+          result.failed ? " · 아래 목록에서 사유를 확인하세요" : "",
+        ),
+      );
+      setFailures(result.failures ?? []);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "좌석 배정에 실패했습니다");
+    }
+  };
+  const downloadSeatTemplate = () => {
+    const csv = "\ufeff사번,좌석번호\n100001,HQ-3F-001\n";
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "seaton-seat-assignments-template.csv";
+    link.click();
+    URL.revokeObjectURL(url);
+  };
   const downloadTemplate = () => {
     const csv =
       "\ufeff사번,이름,이메일,조직코드,조직명,직급,직책,근무지,재직상태\n100001,홍길동,hong@example.com,DEV,개발팀,책임,팀원,본사,active\n";
@@ -118,7 +152,31 @@ export function EmployeesPage() {
               onClick={downloadTemplate}
               sx={{ display: { xs: "none", sm: "inline-flex" } }}
             >
-              양식 받기
+              직원 양식
+            </Button>
+            <Button
+              variant="outlined"
+              startIcon={<DownloadRounded />}
+              onClick={downloadSeatTemplate}
+              sx={{ display: { xs: "none", sm: "inline-flex" } }}
+            >
+              배정 양식
+            </Button>
+            <Button
+              component="label"
+              variant="outlined"
+              startIcon={<EventSeatRounded />}
+            >
+              좌석 일괄 배정
+              <input
+                hidden
+                type="file"
+                accept=".csv,.xlsx"
+                onChange={(event) => {
+                  void assignFromFile(event.target.files?.[0]);
+                  event.target.value = "";
+                }}
+              />
             </Button>
             <Button
               component="label"
@@ -130,7 +188,10 @@ export function EmployeesPage() {
                 hidden
                 type="file"
                 accept=".csv,.xlsx"
-                onChange={(event) => void upload(event.target.files?.[0])}
+                onChange={(event) => {
+                  void upload(event.target.files?.[0]);
+                  event.target.value = "";
+                }}
               />
             </Button>
           </Stack>
@@ -139,6 +200,32 @@ export function EmployeesPage() {
       {message && (
         <Alert severity="success" onClose={() => setMessage("")} sx={{ mb: 2 }}>
           {message}
+        </Alert>
+      )}
+      {failures.length > 0 && (
+        <Alert
+          severity="warning"
+          onClose={() => setFailures([])}
+          sx={{ mb: 2 }}
+        >
+          <Typography variant="subtitle2" gutterBottom>
+            반영되지 않은 {failures.length}행
+          </Typography>
+          <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
+            {failures.slice(0, 20).map((item) => (
+              <li key={`${item.row}-${item.seatNo}`}>
+                <Typography variant="caption">
+                  {item.row}행 · {item.employeeNo || "사번 없음"} →{" "}
+                  {item.seatNo || "좌석 없음"} · {item.error}
+                </Typography>
+              </li>
+            ))}
+          </Box>
+          {failures.length > 20 && (
+            <Typography variant="caption" color="text.secondary">
+              앞의 20행만 표시했습니다.
+            </Typography>
+          )}
         </Alert>
       )}
       {error && (

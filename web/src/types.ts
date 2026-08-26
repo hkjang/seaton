@@ -1,8 +1,5 @@
 export type Role =
-  | "employee"
-  | "department_manager"
-  | "seat_manager"
-  | "system_admin";
+  "employee" | "department_manager" | "seat_manager" | "system_admin";
 export interface User {
   id: string;
   username: string;
@@ -128,3 +125,11 @@ export interface Organization {
   parentId?: string;
   color: string;
 }
+
+/** 좌석 일괄 배정에서 반영되지 않은 행. */
+export type BulkFailure = {
+  row: number;
+  employeeNo: string;
+  seatNo: string;
+  error: string;
+};
