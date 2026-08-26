@@ -367,21 +367,43 @@ func (s *Server) bulkAssignments(w http.ResponseWriter, r *http.Request) {
 		}
 		empNo := strings.TrimSpace(row[0])
 		seatNo := strings.TrimSpace(row[1])
-		var empID, seatID string
-		err := s.db.QueryRow(r.Context(), `SELECT id FROM employees WHERE employee_no=$1`, empNo).Scan(&empID)
-		if err == nil {
-			err = s.db.QueryRow(r.Context(), `SELECT id FROM seats WHERE seat_no=$1 ORDER BY created_at DESC LIMIT 1`, seatNo).Scan(&seatID)
+		if empNo == "" && seatNo == "" {
+			continue
 		}
-		if err == nil {
-			err = s.performAssignment(r.Context(), u, empID, seatID, "일괄 등록", "bulk")
+		fail := func(reason string) {
+			failures = append(failures, map[string]any{"row": i + 2, "employeeNo": empNo, "seatNo": seatNo, "error": reason})
 		}
+		var empID string
+		if err := s.db.QueryRow(r.Context(), `SELECT id FROM employees WHERE employee_no=$1`, empNo).Scan(&empID); err != nil {
+			fail("사번을 찾을 수 없습니다")
+			continue
+		}
+		// 좌석 번호는 도면마다 따로 매겨진다. 게시된 도면으로 좁히지 않으면 아직
+		// 검토 중인 새 버전의 좌석에 배정되어 좌석맵에는 보이지 않는다.
+		var seatID string
+		err := s.db.QueryRow(r.Context(), `SELECT s.id FROM seats s JOIN floor_maps m ON m.id=s.floor_map_id
+                        WHERE s.seat_no=$1 AND m.is_active ORDER BY m.published_at DESC NULLS LAST LIMIT 1`, seatNo).Scan(&seatID)
 		if err != nil {
-			failures = append(failures, map[string]any{"row": i + 2, "employeeNo": empNo, "seatNo": seatNo, "error": err.Error()})
-		} else {
-			success++
+			fail("게시된 도면에서 좌석 번호를 찾을 수 없습니다")
+			continue
 		}
+		if err := s.performAssignment(r.Context(), u, empID, seatID, "일괄 등록", "bulk"); err != nil {
+			fail(assignmentFailure(err))
+			continue
+		}
+		success++
 	}
 	writeJSON(w, 200, map[string]any{"success": success, "failed": len(failures), "failures": failures})
+}
+
+// assignmentFailure는 일괄 배정 실패 사유를 사람이 읽을 수 있는 문장으로 바꾼다.
+// 데이터베이스 오류 원문을 그대로 화면에 내보내면 관리자가 무엇을 고쳐야 할지
+// 알 수 없다.
+func assignmentFailure(err error) string {
+	if strings.Contains(err.Error(), "이미 다른 직원") {
+		return "이미 다른 직원에게 배정된 좌석입니다"
+	}
+	return "배정하지 못했습니다"
 }
 
 func readSpreadsheet(w http.ResponseWriter, r *http.Request) ([][]string, bool) {

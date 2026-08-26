@@ -15,11 +15,23 @@ test.describe("처리 필요", () => {
 
     // 갈래별 탭을 모두 더하면 전체와 같아야 한다.
     let sum = 0;
-    for (const name of ["미배정", "퇴직자", "조직 불일치", "AI 확인"]) {
-      await page.getByRole("tab", { name }).click();
-      sum += await page
-        .getByRole("button", { name: /영역 맞춤|확인 완료|좌석 해제|배정하기/ })
-        .count();
+    const tabs = [
+      { name: "미배정", kind: "unassigned_employee" },
+      { name: "퇴직자", kind: "retired_assignment" },
+      { name: "조직 불일치", kind: "organization_mismatch" },
+      { name: "AI 확인", kind: "low_confidence" },
+    ];
+    for (const { name, kind } of tabs) {
+      // 탭을 누르면 서버에 다시 묻는다. 응답을 기다리지 않고 세면 이전 탭의
+      // 목록을 세게 된다.
+      const [response] = await Promise.all([
+        page.waitForResponse((res) => res.url().includes(`kind=${kind}`)),
+        page.getByRole("tab", { name }).click(),
+      ]);
+      const items = (await response.json()).items as Array<{ kind: string }>;
+      expect(items.every((item) => item.kind === kind)).toBe(true);
+      await expect(page.getByText(`${items.length}개 항목`)).toBeVisible();
+      sum += items.length;
     }
     expect(sum).toBe(listed);
   });

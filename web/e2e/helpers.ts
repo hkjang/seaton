@@ -57,6 +57,65 @@ export const restoreSeat = async (
   });
 };
 
+/** 로그인한 세션의 CSRF 토큰. 변경 요청에 필요하다. */
+export const csrfToken = async (page: Page) =>
+  (await (await page.request.get("/api/v1/auth/me")).json())
+    .csrfToken as string;
+
+const employeeId = async (page: Page, name: string) => {
+  const found = await (
+    await page.request.get(`/api/v1/employees?q=${encodeURIComponent(name)}`)
+  ).json();
+  return found.items[0].id as string;
+};
+
+/**
+ * 직원의 좌석을 건드리는 검증을 감싼다.
+ *
+ * 배정을 바꾸는 검증이 원래대로 돌려놓지 않으면, 다음 검증이 "누가 어디 앉아
+ * 있다"는 전제 위에서 엉뚱한 이유로 깨진다. 실제로 한 검증이 옮겨 놓은 직원
+ * 때문에 다른 세 검증이 무너졌다.
+ */
+export const keepingSeats = async (
+  page: Page,
+  names: string[],
+  body: () => Promise<void>,
+) => {
+  const before = await fetchSeats(page);
+  const home = new Map(
+    names.map((name) => [
+      name,
+      before.find((seat) => seat.employeeName === name)?.id ?? null,
+    ]),
+  );
+  try {
+    await body();
+  } finally {
+    const token = await csrfToken(page);
+    const after = await fetchSeats(page);
+    for (const [name, seatId] of home) {
+      const now = after.find((seat) => seat.employeeName === name);
+      if (now?.id === seatId) continue;
+      if (now) {
+        await page.request.delete(`/api/v1/seat-assignments/${now.id}`, {
+          headers: { "X-CSRF-Token": token },
+        });
+      }
+      if (seatId) {
+        await page.request.post("/api/v1/seat-assignments", {
+          headers: { "X-CSRF-Token": token },
+          data: {
+            employeeId: await employeeId(page, name),
+            seatId,
+            source: "manual",
+            reason: "검증 정리",
+          },
+        });
+      }
+    }
+  }
+};
+
 /**
  * 브라우저 콘솔 오류를 모은다. 타입 검사와 단위 테스트로는 드러나지 않는
  * 런타임 오류를 화면마다 붙잡는 용도다.
