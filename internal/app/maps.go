@@ -231,6 +231,28 @@ func (s *Server) mapPreview(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(preview)
 }
 
+// unpublishFloorMap은 게시를 내린다.
+//
+// 게시 중인 도면은 지울 수 없는데, 그 층의 유일한 버전이면 다른 버전을 게시해
+// 밀어낼 수도 없어 잘못 올린 도면이 영영 남는다. 게시를 내리면 좌석맵에서는
+// 사라지고 좌석과 이력은 그대로 남으므로, 그 뒤에 지울지 다시 게시할지 고를 수
+// 있다.
+func (s *Server) unpublishFloorMap(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "mapID")
+	tag, err := s.db.Exec(r.Context(), `UPDATE floor_maps SET is_active=false,status='archived',published_at=NULL WHERE id=$1 AND is_active`, id)
+	if err != nil {
+		notFoundOrServer(w, err)
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		writeError(w, http.StatusConflict, "map_not_published", "게시 중인 도면이 아닙니다")
+		return
+	}
+	u, _ := userFrom(r)
+	s.audit(r.Context(), u.ID, "floor_map.unpublish", "floor_map", id, r.RemoteAddr, nil)
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // deleteFloorMap은 잘못 올린 도면 버전을 지운다.
 //
 // 게시 중인 도면과 이력이 남은 도면은 지우지 않는다. 좌석이 사라지면 변경 이력의

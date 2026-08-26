@@ -20,6 +20,7 @@ import {
   Skeleton,
   Stack,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import AddBusinessRounded from "@mui/icons-material/AddBusinessRounded";
@@ -28,6 +29,7 @@ import UploadFileRounded from "@mui/icons-material/UploadFileRounded";
 import AutoAwesomeRounded from "@mui/icons-material/AutoAwesomeRounded";
 import PublishRounded from "@mui/icons-material/PublishRounded";
 import DeleteOutlineRounded from "@mui/icons-material/DeleteOutlineRounded";
+import UnpublishedRounded from "@mui/icons-material/UnpublishedRounded";
 import GridOnRounded from "@mui/icons-material/GridOnRounded";
 import CheckCircleRounded from "@mui/icons-material/CheckCircleRounded";
 import RadioButtonCheckedRounded from "@mui/icons-material/RadioButtonCheckedRounded";
@@ -318,7 +320,10 @@ export function MapsPage() {
         <Grid container spacing={2}>
           {maps.map((m) => (
             <Grid key={m.id} size={{ xs: 12, md: 6, lg: 4 }}>
-              <Card>
+              {/* 도면 버전마다 주소를 붙여 화면 검증이 카드를 정확히 집을 수
+                  있게 한다. 글로 카드를 찾으면 버전이 여럿일 때 엉뚱한 카드를
+                  조작한다. */}
+              <Card data-map-version={m.version}>
                 <Box
                   sx={{
                     height: 160,
@@ -428,6 +433,25 @@ export function MapsPage() {
                   >
                     배치 편집
                   </Button>
+                  {m.active && (
+                    <Tooltip title="좌석맵에서 내립니다. 좌석과 이력은 그대로 남습니다">
+                      <Button
+                        size="small"
+                        // 설명은 툴팁으로 두되, 화면 낭독기가 읽는 이름은 조작
+                        // 이름 그대로여야 한다.
+                        aria-label="게시 내림"
+                        startIcon={<UnpublishedRounded />}
+                        onClick={() =>
+                          void action(
+                            `/api/v1/floor-maps/${m.id}/unpublish`,
+                            "게시를 내렸습니다",
+                          )
+                        }
+                      >
+                        게시 내림
+                      </Button>
+                    </Tooltip>
+                  )}
                   {!m.active && (
                     <>
                       <Button
