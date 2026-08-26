@@ -1,4 +1,6 @@
 import {
+  memo,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -54,24 +56,39 @@ import AlignHorizontalLeftRounded from "@mui/icons-material/AlignHorizontalLeftR
 import RotateRightRounded from "@mui/icons-material/RotateRightRounded";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, patchJSON, postJSON, putJSON } from "../api";
+import {
+  centerOn,
+  FIT_VIEW,
+  fitScaleFor,
+  focusOn,
+  type MapView,
+  toViewBox,
+  viewRectFor,
+  visibleSize,
+  zoomAround,
+} from "../lib/mapView";
+import { readableInk } from "../lib/color";
+import {
+  type ColorMode,
+  deriveGrid,
+  needsReviewSeat,
+  SEAT_FILTERS,
+  seatColor,
+  type SeatFilter,
+  seatHighlighted,
+  seatOrgId,
+  zoneMismatched,
+} from "../lib/seats";
 import { useAuth } from "../auth";
 import type {
   Building,
   Employee,
   Floor,
   FloorMap,
+  Organization,
   Seat,
   SeatGrid,
 } from "../types";
-
-const seatColor = (seat: Seat) =>
-  seat.type === "unavailable" || seat.status === "unavailable"
-    ? "#8796A1"
-    : seat.employeeId
-      ? "#087E8B"
-      : seat.type === "shared"
-        ? "#3478C8"
-        : "#FFFFFF";
 
 type SeatPosition = Pick<Seat, "id" | "x" | "y" | "rotation">;
 type MoveOperation = { before: SeatPosition[]; after: SeatPosition[] };
@@ -81,6 +98,15 @@ type ActiveDrag = {
   startY: number;
   before: SeatPosition[];
   after: SeatPosition[];
+};
+// 화면을 끌어 옮기는 동안의 상태. 좌석 드래그와 배타적으로 동작한다.
+type ActivePan = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  startCx: number;
+  startCy: number;
+  moved: boolean;
 };
 const fallbackCanvas = { width: 1000, height: 700 };
 
@@ -100,43 +126,152 @@ const canvasFor = (map?: FloorMap) => {
 const clamp = (value: number, maximum: number) =>
   Math.max(0, Math.min(maximum, value));
 
-const MIN_GRID_PITCH = 0.004;
+// 좌석 하나를 그리는 단위. 화면을 끌거나 확대할 때는 viewBox만 바뀌므로,
+// 좌석 속성이 그대로면 다시 그리지 않도록 memo로 감싼다. 500석 도면에서
+// 팬 한 프레임마다 전체를 리렌더하던 비용을 없애는 것이 목적이다.
+type SeatShapeProps = {
+  seat: Seat;
+  canvasWidth: number;
+  canvasHeight: number;
+  active: boolean;
+  focused: boolean;
+  dimmed: boolean;
+  mismatch: boolean;
+  needsReview: boolean;
+  fill: string;
+  darkLabel: boolean;
+  editMode: boolean;
+  manager: boolean;
+  onPointerDown: (event: ReactPointerEvent<SVGGElement>, seat: Seat) => void;
+  onSelect: (seat: Seat) => void;
+  onEdit: (seat: Seat) => void;
+  onDropEmployee: (event: DragEvent, seat: Seat) => void;
+};
 
-// deriveGrid는 선택된 좌석들의 좌표에서 반복 간격을 읽어 격자 보정값을 만든다.
-// 관리자가 대표 좌석 몇 개만 골라주면 도면 전체 격자가 정해진다.
-const deriveGrid = (selection: Seat[]): SeatGrid | null => {
-  if (selection.length < 2) return null;
-  // 같은 값끼리 뭉친 뒤 이웃 간 최소 간격을 주기로 본다.
-  const spacing = (values: number[], fallbackSize: number) => {
-    const unique = [...new Set(values.map((v) => Math.round(v * 10000)))]
-      .map((v) => v / 10000)
-      .sort((a, b) => a - b);
-    const gaps = unique
-      .slice(1)
-      .map((v, i) => v - unique[i])
-      .filter((gap) => gap >= MIN_GRID_PITCH);
-    if (!gaps.length) return fallbackSize >= MIN_GRID_PITCH ? fallbackSize : 0;
-    return Math.min(...gaps);
-  };
-  const widths = selection.map((s) => s.width);
-  const heights = selection.map((s) => s.height);
-  const pitchX = spacing(
-    selection.map((s) => s.x),
-    Math.max(...widths),
+const SeatShape = memo(function SeatShape({
+  seat,
+  canvasWidth,
+  canvasHeight,
+  active,
+  focused,
+  dimmed,
+  mismatch,
+  needsReview,
+  fill,
+  darkLabel,
+  editMode,
+  manager,
+  onPointerDown,
+  onSelect,
+  onEdit,
+  onDropEmployee,
+}: SeatShapeProps) {
+  const left = seat.x * canvasWidth,
+    top = seat.y * canvasHeight,
+    width = seat.width * canvasWidth,
+    height = seat.height * canvasHeight;
+  const label = seat.employeeName || seat.seatNo;
+  const fontSize = Math.min(13, Math.max(7.5, height * 0.34, width * 0.16));
+  const maxChars = Math.floor(width / (fontSize * 0.62));
+  const showLabel = width >= 20 && height >= 11 && maxChars >= 2;
+  return (
+    <g
+      opacity={dimmed ? 0.14 : 1}
+      transform={`rotate(${seat.rotation} ${left + width / 2} ${top + height / 2})`}
+      onPointerDown={(event) => onPointerDown(event, seat)}
+      onClick={() => onSelect(seat)}
+      onDoubleClick={(event) => {
+        event.stopPropagation();
+        onEdit(seat);
+      }}
+      onDragOver={(event) => manager && event.preventDefault()}
+      onDrop={(event) => onDropEmployee(event, seat)}
+      style={{
+        cursor: editMode ? "move" : "pointer",
+        // 조회 모드에서도 좌석 위에서 끌면 화면이 움직여야 하므로 기본 제스처를 끈다.
+        touchAction: "none",
+      }}
+    >
+      {active && (
+        <rect
+          x={left - 4}
+          y={top - 4}
+          width={width + 8}
+          height={height + 8}
+          rx="9"
+          fill="none"
+          stroke="#FFB703"
+          strokeWidth="2"
+          opacity=".55"
+        >
+          {/* 검색으로 찾아온 좌석 하나만 맥동시켜 눈이 바로 가게 한다. */}
+          {focused && (
+            <animate
+              attributeName="opacity"
+              values="0.9;0.2;0.9"
+              dur="1.4s"
+              repeatCount="6"
+            />
+          )}
+        </rect>
+      )}
+      <rect
+        x={left}
+        y={top}
+        width={width}
+        height={height}
+        rx={Math.min(6, Math.min(width, height) * 0.22)}
+        fill={fill}
+        fillOpacity={seat.employeeId ? 0.95 : 0.85}
+        stroke={
+          active
+            ? "#FFB703"
+            : mismatch
+              ? "#C1436D"
+              : needsReview
+                ? "#E79418"
+                : "#263E4D"
+        }
+        strokeWidth={active ? 3 : mismatch || needsReview ? 2 : 1.4}
+        strokeDasharray={
+          !active && (needsReview || mismatch) ? "5 3" : undefined
+        }
+      />
+      {showLabel && (
+        <text
+          x={left + width / 2}
+          y={top + height / 2}
+          textAnchor="middle"
+          dominantBaseline="central"
+          fontSize={fontSize}
+          fontWeight="700"
+          fill={darkLabel ? "#203846" : "white"}
+          style={{ pointerEvents: "none" }}
+        >
+          {label.length > maxChars
+            ? `${label.slice(0, Math.max(1, maxChars - 1))}…`
+            : label}
+        </text>
+      )}
+      <title>
+        {`${seat.seatNo}${seat.employeeName ? ` · ${seat.employeeName}` : " · 빈 좌석"}${seat.employeeOrganizationName ? ` · ${seat.employeeOrganizationName}` : ""}${needsReview ? " · 검토 필요" : ""}${mismatch ? ` · 구역 불일치(지정 ${seat.organizationName})` : ""}`}
+      </title>
+    </g>
   );
-  const pitchY = spacing(
-    selection.map((s) => s.y),
-    Math.max(...heights),
-  );
-  if (pitchX < MIN_GRID_PITCH || pitchY < MIN_GRID_PITCH) return null;
-  const originX = Math.min(...selection.map((s) => s.x));
-  const originY = Math.min(...selection.map((s) => s.y));
-  return {
-    originX: originX % pitchX,
-    originY: originY % pitchY,
-    pitchX: Math.min(0.5, pitchX),
-    pitchY: Math.min(0.5, pitchY),
-  };
+});
+
+// 전역 키 처리는 도면 위에서만 동작해야 한다. 다이얼로그나 목록에 포커스가
+// 있을 때 방향키를 가로채면 그 화면이 조작 불가가 된다.
+const keyboardTargetsMap = (event: KeyboardEvent) => {
+  const target = event.target as HTMLElement | null;
+  if (!target) return true;
+  if (["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return false;
+  if (target.isContentEditable) return false;
+  // 열려 있는 모달·메뉴 안이면 그쪽이 우선이다.
+  if (target.closest('[role="dialog"], [role="listbox"], [role="menu"]'))
+    return false;
+  if (document.querySelector('[role="dialog"]')) return false;
+  return true;
 };
 
 export function SeatMapPage() {
@@ -156,10 +291,17 @@ export function SeatMapPage() {
     [query, setQuery] = useState(""),
     [selected, setSelected] = useState<Seat | null>(null),
     [loading, setLoading] = useState(true),
-    [zoom, setZoom] = useState(1),
+    [view, setView] = useState<MapView>(FIT_VIEW),
+    [viewport, setViewport] = useState({ width: 0, height: 0 }),
     [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
     [editor, setEditor] = useState<Partial<Seat> | null>(null);
+  const [organizations, setOrganizations] = useState<Organization[]>([]),
+    [colorMode, setColorMode] = useState<ColorMode>("status"),
+    [filters, setFilters] = useState<Set<SeatFilter>>(new Set()),
+    [showZones, setShowZones] = useState(false),
+    // 범례에서 조직을 누르면 그 조직 좌석만 도드라진다.
+    [activeOrg, setActiveOrg] = useState<string | null>(null);
   const [editMode, setEditMode] = useState(
       Boolean(manager && searchParams.get("edit") === "1"),
     ),
@@ -169,18 +311,31 @@ export function SeatMapPage() {
     [redoStack, setRedoStack] = useState<MoveOperation[]>([]),
     [moving, setMoving] = useState(false);
   const dragRef = useRef<ActiveDrag | null>(null);
+  const panRef = useRef<ActivePan | null>(null);
+  // 화면을 끌고 놓은 직후의 click은 좌석 선택으로 오해되므로 한 번 삼킨다.
+  const suppressClickRef = useRef(false);
+  // 커서 모양은 렌더에 반영되어야 하므로 ref가 아니라 상태로 둔다.
+  const [panning, setPanning] = useState(false);
+  // 컨테이너 크기 측정 전에 들어온 이동 요청은 잡아 두었다가 측정 후 적용한다.
+  // URL의 ?q= 로 들어와 첫 렌더에서 검색이 실행되는 경우가 여기 해당한다.
+  const pendingFocusRef = useRef<Seat | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const observerRef = useRef<ResizeObserver | null>(null);
   const lastSearchRef = useRef("");
   const loadBase = async () => {
     setLoading(true);
     try {
-      const [b, f, m] = await Promise.all([
+      const [b, f, m, o] = await Promise.all([
         api<{ items: Building[] }>("/api/v1/buildings"),
         api<{ items: Floor[] }>("/api/v1/floors"),
         api<{ items: FloorMap[] }>("/api/v1/floor-maps"),
+        api<{ items: Organization[] }>("/api/v1/organizations"),
       ]);
       setBuildings(b.items);
       setFloors(f.items);
       setMaps(m.items);
+      setOrganizations(o.items);
       const requestedMap = m.items.find(
         (item) => item.id === searchParams.get("map"),
       );
@@ -248,6 +403,166 @@ export function SeatMapPage() {
       Math.round(y / (step * aspect)) * (step * aspect),
     ];
   };
+  // 화면에 꼭 맞는 배율을 1로 두고, 그 위에 view.zoom을 곱해 실제 배율을 만든다.
+  // viewBox 종횡비를 컨테이너와 같게 유지하므로 레터박스가 생기지 않는다.
+  const fitScale = useMemo(
+    () => fitScaleFor(viewport, canvas),
+    [viewport, canvas],
+  );
+  const visible = useMemo(
+    () => visibleSize(viewport, canvas, view.zoom),
+    [viewport, canvas, view.zoom],
+  );
+  const viewRect = useMemo(
+    () => viewRectFor(view, viewport, canvas),
+    [view, viewport, canvas],
+  );
+  const viewBox = toViewBox(viewRect);
+  // SVG 요소 자체를 관측한다. 컨테이너를 재면 안쪽 여백이 함께 잡혀
+  // viewBox 종횡비가 어긋나고 화면 이동이 커서를 못 따라간다.
+  // effect가 아니라 콜백 ref를 쓰는 이유는, 로딩 중 스켈레톤을 먼저 그리는
+  // 구조라 effect 시점에는 노드가 아직 없고 이후 의존성도 바뀌지 않기 때문이다.
+  useEffect(() => () => observerRef.current?.disconnect(), []);
+  const attachStage = useCallback((node: SVGSVGElement | null) => {
+    svgRef.current = node;
+    observerRef.current?.disconnect();
+    if (!node) {
+      setViewport({ width: 0, height: 0 });
+      return;
+    }
+    const measure = () => {
+      const box = node.getBoundingClientRect();
+      setViewport({ width: box.width, height: box.height });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    observerRef.current = observer;
+  }, []);
+  const applyZoom = (next: number, pivot?: { x: number; y: number }) =>
+    setView((current) => zoomAround(current, next, viewport, canvas, pivot));
+  const moveCenter = (cx: number, cy: number) =>
+    setView((current) => centerOn(current, cx, cy, viewport, canvas));
+  // 좌석을 화면 중앙으로 가져오고 최소 배율까지 확대한다. 검색 결과 이동에 쓴다.
+  const focusSeat = (seat: Seat) => {
+    if (!viewport.width || !viewport.height) {
+      pendingFocusRef.current = seat;
+      return;
+    }
+    setView((current) =>
+      focusOn(
+        current,
+        { x: seat.x, y: seat.y, width: seat.width, height: seat.height },
+        viewport,
+        canvas,
+      ),
+    );
+  };
+  useEffect(() => {
+    const seat = pendingFocusRef.current;
+    if (!seat || !viewport.width || !viewport.height) return;
+    pendingFocusRef.current = null;
+    setView((current) =>
+      focusOn(
+        current,
+        { x: seat.x, y: seat.y, width: seat.width, height: seat.height },
+        viewport,
+        canvas,
+      ),
+    );
+  }, [viewport, canvas]);
+  const orgColor = useMemo(
+    () => new Map(organizations.map((o) => [o.id, o.color])),
+    [organizations],
+  );
+  // 조직 모드에서는 실제로 앉은 직원의 소속 색을 쓰고, 비었으면 좌석 구역 색을 쓴다.
+  const fillFor = (seat: Seat) => {
+    if (colorMode !== "organization") return seatColor(seat);
+    const key = seat.employeeOrganizationId ?? seat.organizationId;
+    return (key && orgColor.get(key)) || "#DFE7EB";
+  };
+  // 좌석에 구역이 지정된 조직마다 경계 상자를 만들어 배경에 깔아준다.
+  const zones = useMemo(() => {
+    if (!showZones) return [];
+    const boxes = new Map<
+      string,
+      { minX: number; minY: number; maxX: number; maxY: number; count: number }
+    >();
+    for (const seat of seats) {
+      if (!seat.organizationId) continue;
+      const box = boxes.get(seat.organizationId);
+      const right = seat.x + seat.width,
+        bottom = seat.y + seat.height;
+      if (!box)
+        boxes.set(seat.organizationId, {
+          minX: seat.x,
+          minY: seat.y,
+          maxX: right,
+          maxY: bottom,
+          count: 1,
+        });
+      else {
+        box.minX = Math.min(box.minX, seat.x);
+        box.minY = Math.min(box.minY, seat.y);
+        box.maxX = Math.max(box.maxX, right);
+        box.maxY = Math.max(box.maxY, bottom);
+        box.count += 1;
+      }
+    }
+    return [...boxes.entries()].map(([id, box]) => ({
+      id,
+      name: organizations.find((o) => o.id === id)?.name ?? "미지정 구역",
+      color: orgColor.get(id) || "#8796A1",
+      ...box,
+    }));
+  }, [showZones, seats, organizations, orgColor]);
+  // 이 도면에 실제로 좌석이 있는 조직만 좌석 수와 함께 모은다. 조직 색상 모드의
+  // 범례로 쓰이며, 상태 기준 범례와 달리 도면마다 내용이 달라진다.
+  const mapOrganizations = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const seat of seats) {
+      const id = seatOrgId(seat);
+      if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+      .map(([id, count]) => ({
+        id,
+        count,
+        name: organizations.find((o) => o.id === id)?.name ?? "알 수 없는 조직",
+        color: orgColor.get(id) || "#8796A1",
+      }))
+      .sort((a, b) => b.count - a.count);
+  }, [seats, organizations, orgColor]);
+  // 실제로 도드라지는 좌석 수. 필터와 조직 강조를 함께 반영해야 화면과 맞는다.
+  const highlightedCount = useMemo(
+    () =>
+      seats.filter((seat) => seatHighlighted(seat, filters, activeOrg)).length,
+    [seats, filters, activeOrg],
+  );
+  const highlighting = filters.size > 0 || activeOrg !== null;
+  const toggleFilter = (key: SeatFilter) =>
+    setFilters((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  // 휠 확대/축소. React의 onWheel은 passive로 붙어 페이지 스크롤을 막을 수
+  // 없으므로 직접 등록한다. 커서 아래 지점을 고정해 원하는 곳을 바로 파고든다.
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const point = toMapPoint(svg, event.clientX, event.clientY);
+      applyZoom(
+        view.zoom * Math.exp(-event.deltaY * 0.0015),
+        point ?? undefined,
+      );
+    };
+    svg.addEventListener("wheel", onWheel, { passive: false });
+    return () => svg.removeEventListener("wheel", onWheel);
+  });
   const toMapPoint = (
     svg: SVGSVGElement,
     clientX: number,
@@ -276,6 +591,8 @@ export function SeatMapPage() {
   };
   const chooseMap = async (id: string) => {
     setMapId(id);
+    setView(FIT_VIEW);
+    setActiveOrg(null);
     setSelected(null);
     setSelectedIds(new Set());
     setUndoStack([]);
@@ -306,7 +623,10 @@ export function SeatMapPage() {
       const first = data.items.find((x) => x.seatId);
       if (first?.seatId) {
         const found = seats.find((s) => s.id === first.seatId);
-        if (found) setSelected(found);
+        if (found) {
+          setSelected(found);
+          focusSeat(found);
+        }
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "검색하지 못했습니다");
@@ -319,11 +639,14 @@ export function SeatMapPage() {
   useEffect(() => {
     const term = searchParams.get("q")?.trim();
     const key = `${mapId}:${term}`;
-    if (!term || !mapId || key === lastSearchRef.current) return;
+    // 좌석이 도착하기 전에 검색하면 결과 좌석을 찾지 못해 이동이 조용히 무산된다.
+    // mapId 는 좌석 조회보다 먼저 정해지므로 좌석이 실릴 때까지 기다린다.
+    if (!term || !mapId || !seats.length || key === lastSearchRef.current)
+      return;
     lastSearchRef.current = key;
     setQuery(term);
     void runSearch(term);
-  }, [mapId, searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mapId, seats, searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
   const drop = async (event: DragEvent, seat: Seat) => {
     event.preventDefault();
     if (!manager) return;
@@ -501,6 +824,172 @@ export function SeatMapPage() {
     dragRef.current = null;
     void commitOperation({ before: drag.before, after: drag.after });
   };
+  // 좌석이 아닌 빈 영역에서 시작한 드래그는 화면 이동으로 처리한다.
+  const beginPan = (event: ReactPointerEvent<SVGSVGElement>) => {
+    // 이미 끌고 있는 포인터가 있으면 무시한다. 두 번째 손가락이 팬을 가로채면
+    // 화면이 튀고, 그 손가락을 떼는 순간 첫 손가락의 이동이 갈 곳을 잃는다.
+    if (dragRef.current || panRef.current) return;
+    panRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startCx: view.cx,
+      startCy: view.cy,
+      moved: false,
+    };
+    // 여기서 포인터를 캡처하면 뒤따르는 click이 SVG로 재지정되어 좌석 선택이
+    // 죽는다. 실제로 임계값을 넘어 움직인 뒤에 캡처한다.
+  };
+  const movePan = (event: ReactPointerEvent<SVGSVGElement>) => {
+    const pan = panRef.current;
+    if (!pan || pan.pointerId !== event.pointerId) return false;
+    const scale = fitScale * view.zoom;
+    if (scale <= 0) return true;
+    const dx = (event.clientX - pan.startX) / scale / canvas.width;
+    const dy = (event.clientY - pan.startY) / scale / canvas.height;
+    if (
+      !pan.moved &&
+      (Math.abs(event.clientX - pan.startX) > 3 ||
+        Math.abs(event.clientY - pan.startY) > 3)
+    ) {
+      pan.moved = true;
+      event.currentTarget.setPointerCapture(event.pointerId);
+      setPanning(true);
+    }
+    if (!pan.moved) return true;
+    moveCenter(pan.startCx - dx, pan.startCy - dy);
+    return true;
+  };
+  const endPan = (event: ReactPointerEvent<SVGSVGElement>) => {
+    const pan = panRef.current;
+    if (!pan || pan.pointerId !== event.pointerId) return false;
+    panRef.current = null;
+    suppressClickRef.current = pan.moved;
+    if (pan.moved) {
+      if (event.currentTarget.hasPointerCapture(event.pointerId))
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      setPanning(false);
+    }
+    return pan.moved;
+  };
+  const canvasPointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
+    // 좌석 위에서 시작한 편집 드래그는 좌석 쪽에서 이미 전파를 멈춘다.
+    if (event.button !== 0 && event.button !== 1) return;
+    suppressClickRef.current = false;
+    if (event.target === event.currentTarget) {
+      setSelected(null);
+      setSelectedIds(new Set());
+    }
+    beginPan(event);
+  };
+  const canvasPointerMove = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (movePan(event)) return;
+    moveSeats(event);
+  };
+  const canvasPointerUp = (event: ReactPointerEvent<SVGSVGElement>) => {
+    endPan(event);
+    finishSeatMove(event);
+  };
+  // memo된 좌석이 매 렌더 무효화되지 않도록 콜백을 고정한다. 바뀌는 값은
+  // ref로 읽어 콜백 신원(identity)을 유지한다.
+  const seatActionsRef = useRef({
+    beginSeatMove,
+    drop,
+    setEditor,
+    setSelected,
+    editMode,
+    manager,
+  });
+  seatActionsRef.current = {
+    beginSeatMove,
+    drop,
+    setEditor,
+    setSelected,
+    editMode,
+    manager,
+  };
+  const onSeatPointerDown = useCallback(
+    (event: ReactPointerEvent<SVGGElement>, seat: Seat) =>
+      seatActionsRef.current.beginSeatMove(event, seat),
+    [],
+  );
+  const onSeatSelect = useCallback((seat: Seat) => {
+    if (suppressClickRef.current) return;
+    if (!seatActionsRef.current.editMode)
+      seatActionsRef.current.setSelected(seat);
+  }, []);
+  const onSeatEdit = useCallback((seat: Seat) => {
+    const actions = seatActionsRef.current;
+    if (actions.manager && actions.editMode) actions.setEditor(seat);
+  }, []);
+  const onSeatDrop = useCallback(
+    (event: DragEvent, seat: Seat) =>
+      void seatActionsRef.current.drop(event, seat),
+    [],
+  );
+  // 좌석 레이어는 좌석 데이터와 표시 기준이 바뀔 때만 다시 만든다.
+  // 화면 이동·확대는 viewBox만 바꾸므로 이 목록을 건드리지 않는다.
+  const seatLayer = useMemo(
+    () =>
+      seats.map((seat) => (
+        <SeatShape
+          key={seat.id}
+          seat={seat}
+          canvasWidth={canvas.width}
+          canvasHeight={canvas.height}
+          active={selectedIds.has(seat.id) || selected?.id === seat.id}
+          focused={selected?.id === seat.id}
+          dimmed={!seatHighlighted(seat, filters, activeOrg)}
+          mismatch={zoneMismatched(seat)}
+          needsReview={needsReviewSeat(seat)}
+          fill={fillFor(seat)}
+          darkLabel={readableInk(fillFor(seat)) === "#203846"}
+          editMode={editMode}
+          manager={Boolean(manager)}
+          onPointerDown={onSeatPointerDown}
+          onSelect={onSeatSelect}
+          onEdit={onSeatEdit}
+          onDropEmployee={onSeatDrop}
+        />
+      )),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      seats,
+      canvas,
+      selectedIds,
+      selected?.id,
+      filters,
+      activeOrg,
+      colorMode,
+      orgColor,
+      editMode,
+      manager,
+    ],
+  );
+  // 미니맵의 좌석 점도 화면 이동마다 다시 그릴 이유가 없다. 팬 중에는
+  // 현재 영역 사각형만 움직이면 되므로 좌석 목록을 따로 묶어 둔다.
+  const minimapSeats = useMemo(
+    () =>
+      seats.map((seat) => (
+        <rect
+          key={seat.id}
+          x={seat.x * canvas.width}
+          y={seat.y * canvas.height}
+          width={Math.max(3, seat.width * canvas.width)}
+          height={Math.max(3, seat.height * canvas.height)}
+          fill={fillFor(seat)}
+          opacity={seatHighlighted(seat, filters, activeOrg) ? 0.9 : 0.15}
+        />
+      )),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [seats, canvas, filters, activeOrg, colorMode, orgColor],
+  );
+  // 미니맵의 한 점을 화면 중심으로 삼는다. 클릭과 드래그가 같은 경로를 쓴다.
+  const moveViewToMinimap = (event: ReactPointerEvent<SVGSVGElement>) => {
+    const point = toMapPoint(event.currentTarget, event.clientX, event.clientY);
+    if (!point) return;
+    moveCenter(point.x, point.y);
+  };
   const applyTransform = (
     kind: "left" | "top" | "rotate" | "nudge",
     dx = 0,
@@ -622,8 +1111,7 @@ export function SeatMapPage() {
   useEffect(() => {
     if (!editMode) return;
     const keyboard = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement;
-      if (["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
+      if (!keyboardTargetsMap(event)) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
         event.preventDefault();
         if (event.shiftKey) void redo();
@@ -646,6 +1134,40 @@ export function SeatMapPage() {
       if (delta[event.key]) {
         event.preventDefault();
         applyTransform("nudge", ...delta[event.key]);
+      }
+    };
+    window.addEventListener("keydown", keyboard);
+    return () => window.removeEventListener("keydown", keyboard);
+  });
+  // 조회 모드에서는 방향키가 화면을 옮기고, +/-로 확대, 0으로 전체 보기를 한다.
+  // 편집 모드의 방향키는 좌석 미세 이동이라 그쪽 핸들러가 먼저 가져간다.
+  useEffect(() => {
+    if (editMode) return;
+    const keyboard = (event: KeyboardEvent) => {
+      if (!keyboardTargetsMap(event)) return;
+      const stepX = (visible.width / canvas.width) * 0.25;
+      const stepY = (visible.height / canvas.height) * 0.25;
+      const pan: Record<string, [number, number]> = {
+        ArrowLeft: [-stepX, 0],
+        ArrowRight: [stepX, 0],
+        ArrowUp: [0, -stepY],
+        ArrowDown: [0, stepY],
+      };
+      if (pan[event.key]) {
+        event.preventDefault();
+        const [dx, dy] = pan[event.key];
+        moveCenter(view.cx + dx, view.cy + dy);
+        return;
+      }
+      if (event.key === "+" || event.key === "=") {
+        event.preventDefault();
+        applyZoom(view.zoom * 1.35);
+      } else if (event.key === "-" || event.key === "_") {
+        event.preventDefault();
+        applyZoom(view.zoom / 1.35);
+      } else if (event.key === "0") {
+        event.preventDefault();
+        setView(FIT_VIEW);
       }
     };
     window.addEventListener("keydown", keyboard);
@@ -870,7 +1392,10 @@ export function SeatMapPage() {
                   }
                   onClick={() => {
                     const seat = seats.find((s) => s.id === e.seatId);
-                    if (seat) setSelected(seat);
+                    if (seat) {
+                      setSelected(seat);
+                      focusSeat(seat);
+                    }
                   }}
                   sx={{
                     display: "flex",
@@ -1082,20 +1607,20 @@ export function SeatMapPage() {
               <Tooltip title="축소">
                 <IconButton
                   size="small"
-                  onClick={() => setZoom((z) => Math.max(0.7, z - 0.2))}
+                  onClick={() => applyZoom(view.zoom / 1.35)}
                 >
                   <ZoomOutRounded />
                 </IconButton>
               </Tooltip>
-              <Tooltip title="도면 너비에 맞춤">
-                <IconButton size="small" onClick={() => setZoom(1)}>
+              <Tooltip title="전체 보기 (도면 맞춤)">
+                <IconButton size="small" onClick={() => setView(FIT_VIEW)}>
                   <CenterFocusStrongRounded />
                 </IconButton>
               </Tooltip>
               <Tooltip title="확대">
                 <IconButton
                   size="small"
-                  onClick={() => setZoom((z) => Math.min(2.2, z + 0.2))}
+                  onClick={() => applyZoom(view.zoom * 1.35)}
                 >
                   <ZoomInRounded />
                 </IconButton>
@@ -1111,7 +1636,86 @@ export function SeatMapPage() {
                   fontVariantNumeric: "tabular-nums",
                 }}
               >
-                {Math.round(zoom * 100)}%
+                {Math.round(view.zoom * 100)}%
+              </Typography>
+            </Box>
+            {/* 색상 기준과 좌석 필터. 조회 화면에서 원하는 갈래만 도드라지게 한다. */}
+            <Box
+              sx={{
+                position: "absolute",
+                top: 60,
+                left: 12,
+                zIndex: 2,
+                display: "flex",
+                flexDirection: "column",
+                gap: 0.75,
+                p: 1,
+                maxWidth: 232,
+                bgcolor: "rgba(255,255,255,.92)",
+                backdropFilter: "blur(6px)",
+                border: "1px solid rgba(14,45,62,.1)",
+                borderRadius: 2,
+                boxShadow: 2,
+              }}
+            >
+              <Stack direction="row" spacing={0.5} alignItems="center">
+                <Chip
+                  size="small"
+                  label="상태 색"
+                  variant={colorMode === "status" ? "filled" : "outlined"}
+                  color={colorMode === "status" ? "primary" : "default"}
+                  onClick={() => setColorMode("status")}
+                />
+                <Chip
+                  size="small"
+                  label="조직 색"
+                  variant={colorMode === "organization" ? "filled" : "outlined"}
+                  color={colorMode === "organization" ? "primary" : "default"}
+                  onClick={() => setColorMode("organization")}
+                />
+                <Tooltip title="좌석에 지정된 조직 구역을 배경으로 표시">
+                  <Chip
+                    size="small"
+                    label="구역"
+                    variant={showZones ? "filled" : "outlined"}
+                    color={showZones ? "secondary" : "default"}
+                    onClick={() => setShowZones((v) => !v)}
+                  />
+                </Tooltip>
+              </Stack>
+              <Divider flexItem />
+              <Box
+                sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}
+                role="group"
+                aria-label="좌석 필터"
+              >
+                {SEAT_FILTERS.map((filter) => (
+                  <Chip
+                    key={filter.key}
+                    size="small"
+                    label={filter.label}
+                    variant={filters.has(filter.key) ? "filled" : "outlined"}
+                    color={filters.has(filter.key) ? "primary" : "default"}
+                    onClick={() => toggleFilter(filter.key)}
+                  />
+                ))}
+              </Box>
+              {activeOrg !== null && (
+                <Chip
+                  size="small"
+                  color="secondary"
+                  label={`${
+                    mapOrganizations.find((o) => o.id === activeOrg)?.name ??
+                    "조직"
+                  } 강조 해제`}
+                  onDelete={() => setActiveOrg(null)}
+                  onClick={() => setActiveOrg(null)}
+                />
+              )}
+              <Typography variant="caption" color="text.secondary">
+                {highlighting
+                  ? `${highlightedCount} / ${seats.length}석 강조`
+                  : `${seats.length}석 전체`}
               </Typography>
             </Box>
             {!currentMap.overlayReady && (
@@ -1133,10 +1737,11 @@ export function SeatMapPage() {
               />
             )}
             <Box
+              ref={stageRef}
               sx={{
-                width: "100%",
-                height: "100%",
-                overflow: "auto",
+                position: "absolute",
+                inset: 0,
+                overflow: "hidden",
                 p: 2.5,
               }}
             >
@@ -1172,30 +1777,30 @@ export function SeatMapPage() {
                 </Box>
               ) : (
                 <svg
+                  ref={attachStage}
                   // 편집 모드에서는 좌석이 조작 대상이므로 단일 이미지로 묶지 않는다.
                   role={editMode ? "group" : "img"}
                   aria-label={`${currentMap.floorName} 좌석 배치도`}
-                  viewBox={`0 0 ${canvas.width} ${canvas.height}`}
+                  viewBox={viewBox}
                   onDoubleClick={mapDoubleClick}
-                  onPointerMove={moveSeats}
-                  onPointerUp={finishSeatMove}
-                  onPointerCancel={finishSeatMove}
-                  onPointerDown={(event) => {
-                    if (event.target === event.currentTarget) {
-                      setSelected(null);
-                      setSelectedIds(new Set());
-                    }
-                  }}
+                  onPointerMove={canvasPointerMove}
+                  onPointerUp={canvasPointerUp}
+                  onPointerCancel={canvasPointerUp}
+                  onPointerDown={canvasPointerDown}
                   style={{
                     display: "block",
-                    margin: "auto",
-                    width: `${zoom * 100}%`,
-                    aspectRatio: `${canvas.width} / ${canvas.height}`,
-                    minWidth: 320,
+                    width: "100%",
+                    height: "100%",
                     background: "#fff",
                     borderRadius: 14,
                     boxShadow: "0 10px 30px rgba(14,45,62,.14)",
-                    touchAction: editMode ? "none" : "auto",
+                    // 화면 이동과 확대를 직접 다루므로 브라우저 기본 제스처를 끈다.
+                    touchAction: "none",
+                    cursor: editMode
+                      ? "default"
+                      : panning
+                        ? "grabbing"
+                        : "grab",
                   }}
                 >
                   <defs>
@@ -1236,101 +1841,97 @@ export function SeatMapPage() {
                       style={{ pointerEvents: "none" }}
                     />
                   )}
-                  {seats.map((seat) => {
-                    const left = seat.x * canvas.width,
-                      top = seat.y * canvas.height,
-                      width = seat.width * canvas.width,
-                      height = seat.height * canvas.height;
-                    const active =
-                      selectedIds.has(seat.id) || selected?.id === seat.id;
-                    const needsReview = Boolean(
-                      seat.confidence && seat.confidence < 0.95,
-                    );
-                    const label = seat.employeeName || seat.seatNo;
-                    const fontSize = Math.min(
-                      13,
-                      Math.max(7.5, height * 0.34, width * 0.16),
-                    );
-                    const maxChars = Math.floor(width / (fontSize * 0.62));
-                    const showLabel =
-                      width >= 20 && height >= 11 && maxChars >= 2;
+                  {/* 조직 구역: 좌석에 지정된 구역의 경계 상자를 배경에 깐다. */}
+                  {zones.map((zone) => {
+                    const x = zone.minX * canvas.width - 6,
+                      y = zone.minY * canvas.height - 6,
+                      w = (zone.maxX - zone.minX) * canvas.width + 12,
+                      h = (zone.maxY - zone.minY) * canvas.height + 12;
                     return (
-                      <g
-                        key={seat.id}
-                        transform={`rotate(${seat.rotation} ${left + width / 2} ${top + height / 2})`}
-                        onPointerDown={(event) => beginSeatMove(event, seat)}
-                        onClick={() => {
-                          if (!editMode) setSelected(seat);
-                        }}
-                        onDoubleClick={(event) => {
-                          event.stopPropagation();
-                          if (manager && editMode) setEditor(seat);
-                        }}
-                        onDragOver={(e) => manager && e.preventDefault()}
-                        onDrop={(e) => void drop(e, seat)}
-                        style={{
-                          cursor: editMode ? "move" : "pointer",
-                          touchAction: editMode ? "none" : "auto",
-                        }}
-                      >
-                        {active && (
-                          <rect
-                            x={left - 4}
-                            y={top - 4}
-                            width={width + 8}
-                            height={height + 8}
-                            rx="9"
-                            fill="none"
-                            stroke="#FFB703"
-                            strokeWidth="2"
-                            opacity=".55"
-                          />
-                        )}
+                      <g key={zone.id} style={{ pointerEvents: "none" }}>
                         <rect
-                          x={left}
-                          y={top}
-                          width={width}
-                          height={height}
-                          rx={Math.min(6, Math.min(width, height) * 0.22)}
-                          fill={seatColor(seat)}
-                          fillOpacity={seat.employeeId ? 0.95 : 0.85}
-                          stroke={
-                            active
-                              ? "#FFB703"
-                              : needsReview
-                                ? "#E79418"
-                                : "#263E4D"
-                          }
-                          strokeWidth={active ? 3 : needsReview ? 2 : 1.4}
-                          strokeDasharray={
-                            needsReview && !active ? "5 3" : undefined
-                          }
+                          x={x}
+                          y={y}
+                          width={w}
+                          height={h}
+                          rx="12"
+                          fill={zone.color}
+                          fillOpacity="0.08"
+                          stroke={zone.color}
+                          strokeWidth="1.6"
+                          strokeDasharray="8 5"
+                          strokeOpacity="0.55"
                         />
-                        {showLabel && (
-                          <text
-                            x={left + width / 2}
-                            y={top + height / 2}
-                            textAnchor="middle"
-                            dominantBaseline="central"
-                            fontSize={fontSize}
-                            fontWeight="700"
-                            fill={seat.employeeId ? "white" : "#203846"}
-                            style={{ pointerEvents: "none" }}
-                          >
-                            {label.length > maxChars
-                              ? `${label.slice(0, Math.max(1, maxChars - 1))}…`
-                              : label}
-                          </text>
-                        )}
-                        <title>
-                          {`${seat.seatNo}${seat.employeeName ? ` · ${seat.employeeName}` : " · 빈 좌석"}${needsReview ? " · 검토 필요" : ""}`}
-                        </title>
+                        <text
+                          x={x + 8}
+                          y={y + 16}
+                          fontSize="12"
+                          fontWeight="700"
+                          fill={zone.color}
+                          opacity="0.85"
+                        >
+                          {`${zone.name} · ${zone.count}석`}
+                        </text>
                       </g>
                     );
                   })}
+                  {seatLayer}
                 </svg>
               )}
             </Box>
+            {/* 미니맵: 확대했을 때만 나타나 현재 보는 영역을 알려준다. */}
+            {(view.zoom > 1.05 || filters.size > 0 || activeOrg !== null) && (
+              <Box
+                sx={{
+                  position: "absolute",
+                  left: 12,
+                  bottom: 12,
+                  zIndex: 2,
+                  width: 168,
+                  p: 0.75,
+                  bgcolor: "rgba(255,255,255,.94)",
+                  backdropFilter: "blur(6px)",
+                  border: "1px solid rgba(14,45,62,.1)",
+                  borderRadius: 2,
+                  boxShadow: 2,
+                }}
+              >
+                <svg
+                  viewBox={`0 0 ${canvas.width} ${canvas.height}`}
+                  role="img"
+                  aria-label="도면 전체 미니맵"
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    background: "#F1F6F7",
+                    borderRadius: 6,
+                    cursor: "pointer",
+                  }}
+                  onPointerDown={(event) => {
+                    event.currentTarget.setPointerCapture(event.pointerId);
+                    moveViewToMinimap(event);
+                  }}
+                  onPointerMove={(event) => {
+                    // 버튼을 누른 채 끌면 화면이 따라온다.
+                    if (event.buttons === 1) moveViewToMinimap(event);
+                  }}
+                >
+                  {minimapSeats}
+                  {/* 현재 화면 영역 */}
+                  <rect
+                    x={viewRect.x}
+                    y={viewRect.y}
+                    width={viewRect.width}
+                    height={viewRect.height}
+                    fill="none"
+                    stroke="#FFB703"
+                    strokeWidth={Math.max(4, canvas.width * 0.006)}
+                  />
+                </svg>
+              </Box>
+            )}
+            {/* 범례는 색상 기준을 따라간다. 조직 모드에서 상태 범례를 보여주면
+                화면의 색과 설명이 어긋나기 때문이다. */}
             <Box
               sx={{
                 position: "absolute",
@@ -1340,7 +1941,9 @@ export function SeatMapPage() {
                 flexWrap: "wrap",
                 columnGap: 1.25,
                 rowGap: 0.5,
-                maxWidth: "calc(100% - 24px)",
+                maxWidth: "calc(100% - 200px)",
+                maxHeight: 96,
+                overflowY: "auto",
                 bgcolor: "rgba(255,255,255,.94)",
                 backdropFilter: "blur(6px)",
                 border: "1px solid rgba(14,45,62,.1)",
@@ -1350,35 +1953,97 @@ export function SeatMapPage() {
                 py: 0.85,
               }}
             >
-              {[
-                { color: "#087E8B", label: "배정", dashed: false },
-                { color: "#FFFFFF", label: "빈 좌석", dashed: false },
-                { color: "#3478C8", label: "공용", dashed: false },
-                { color: "#8796A1", label: "사용불가", dashed: false },
-                { color: "#FFFFFF", label: "검토 필요", dashed: true },
-              ].map(({ color, label, dashed }) => (
-                <Stack
-                  key={label}
-                  direction="row"
-                  spacing={0.6}
-                  alignItems="center"
-                >
-                  <Box
-                    sx={{
-                      width: 11,
-                      height: 11,
-                      borderRadius: 0.5,
-                      bgcolor: color,
-                      border: dashed
-                        ? "1.5px dashed #E79418"
-                        : "1px solid #8796A1",
-                    }}
-                  />
-                  <Typography variant="caption" sx={{ whiteSpace: "nowrap" }}>
-                    {label}
+              {colorMode === "organization" ? (
+                mapOrganizations.length ? (
+                  <>
+                    {mapOrganizations.map((org) => (
+                      <Stack
+                        key={org.id}
+                        direction="row"
+                        spacing={0.6}
+                        alignItems="center"
+                        onClick={() =>
+                          setActiveOrg((current) =>
+                            current === org.id ? null : org.id,
+                          )
+                        }
+                        sx={{
+                          cursor: "pointer",
+                          opacity:
+                            activeOrg === null || activeOrg === org.id
+                              ? 1
+                              : 0.4,
+                        }}
+                      >
+                        <Box
+                          sx={{
+                            width: 11,
+                            height: 11,
+                            borderRadius: 0.5,
+                            bgcolor: org.color,
+                            border: "1px solid rgba(14,45,62,.25)",
+                          }}
+                        />
+                        <Typography
+                          variant="caption"
+                          sx={{ whiteSpace: "nowrap" }}
+                          fontWeight={activeOrg === org.id ? 700 : 400}
+                        >
+                          {`${org.name} ${org.count}`}
+                        </Typography>
+                      </Stack>
+                    ))}
+                    {activeOrg !== null && (
+                      <Chip
+                        size="small"
+                        label="강조 해제"
+                        variant="outlined"
+                        onClick={() => setActiveOrg(null)}
+                      />
+                    )}
+                  </>
+                ) : (
+                  <Typography variant="caption" color="text.secondary">
+                    조직이 지정된 좌석이 없습니다
                   </Typography>
-                </Stack>
-              ))}
+                )
+              ) : (
+                [
+                  { color: "#087E8B", label: "배정", dashed: false },
+                  { color: "#FFFFFF", label: "빈 좌석", dashed: false },
+                  { color: "#3478C8", label: "공용", dashed: false },
+                  { color: "#8796A1", label: "사용불가", dashed: false },
+                  { color: "#FFFFFF", label: "검토 필요", dashed: true },
+                  {
+                    color: "#FFFFFF",
+                    label: "구역 불일치",
+                    dashed: true,
+                    tone: "#C1436D",
+                  },
+                ].map(({ color, label, dashed, tone }) => (
+                  <Stack
+                    key={label}
+                    direction="row"
+                    spacing={0.6}
+                    alignItems="center"
+                  >
+                    <Box
+                      sx={{
+                        width: 11,
+                        height: 11,
+                        borderRadius: 0.5,
+                        bgcolor: color,
+                        border: dashed
+                          ? `1.5px dashed ${tone ?? "#E79418"}`
+                          : "1px solid #8796A1",
+                      }}
+                    />
+                    <Typography variant="caption" sx={{ whiteSpace: "nowrap" }}>
+                      {label}
+                    </Typography>
+                  </Stack>
+                ))
+              )}
             </Box>
           </Paper>
           <Paper sx={{ p: 2.5, minHeight: { xs: 220, lg: 0 } }}>

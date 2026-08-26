@@ -26,10 +26,11 @@ jobs:
         run: |
           go test ./...
           go vet ./...
-      - name: React production build
+      - name: React tests and production build
         working-directory: web
         run: |
           npm ci
+          npm test
           npm run build
       - name: Docker image build
         run: docker build --build-arg VERSION=ci --build-arg COMMIT="$GITHUB_SHA" --build-arg BUILT_AT=ci -t seaton:ci .

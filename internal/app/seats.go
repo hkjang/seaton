@@ -20,9 +20,10 @@ func (s *Server) listSeats(w http.ResponseWriter, r *http.Request) {
 	floorID := r.URL.Query().Get("floorId")
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	org := r.URL.Query().Get("organizationId")
-	rows, err := s.db.Query(r.Context(), `SELECT s.id,s.floor_map_id,s.seat_no,s.type,s.status,s.x,s.y,s.width,s.height,s.rotation,s.confidence,s.organization_id,COALESCE(o.name,''),e.id,COALESCE(e.employee_no,''),COALESCE(e.name,'')
+	rows, err := s.db.Query(r.Context(), `SELECT s.id,s.floor_map_id,s.seat_no,s.type,s.status,s.x,s.y,s.width,s.height,s.rotation,s.confidence,s.organization_id,COALESCE(o.name,''),e.id,COALESCE(e.employee_no,''),COALESCE(e.name,''),e.organization_id,COALESCE(eo.name,'')
 	FROM seats s JOIN floor_maps m ON m.id=s.floor_map_id LEFT JOIN organizations o ON o.id=s.organization_id
 	LEFT JOIN seat_assignments a ON a.seat_id=s.id AND a.ended_at IS NULL LEFT JOIN employees e ON e.id=a.employee_id
+	LEFT JOIN organizations eo ON eo.id=e.organization_id
 	WHERE ($1='' OR s.floor_map_id=$1) AND ($2='' OR m.floor_id=$2) AND ($3='' OR s.seat_no ILIKE '%%'||$3||'%%' OR e.name ILIKE '%%'||$3||'%%' OR e.employee_no ILIKE '%%'||$3||'%%') AND ($4='' OR e.organization_id=$4 OR s.organization_id=$4) ORDER BY s.seat_no`, mapID, floorID, q, org)
 	if err != nil {
 		notFoundOrServer(w, err)
@@ -32,7 +33,7 @@ func (s *Server) listSeats(w http.ResponseWriter, r *http.Request) {
 	items := []Seat{}
 	for rows.Next() {
 		var item Seat
-		if rows.Scan(&item.ID, &item.FloorMapID, &item.SeatNo, &item.Type, &item.Status, &item.X, &item.Y, &item.Width, &item.Height, &item.Rotation, &item.Confidence, &item.OrganizationID, &item.OrganizationName, &item.EmployeeID, &item.EmployeeNo, &item.EmployeeName) == nil {
+		if rows.Scan(&item.ID, &item.FloorMapID, &item.SeatNo, &item.Type, &item.Status, &item.X, &item.Y, &item.Width, &item.Height, &item.Rotation, &item.Confidence, &item.OrganizationID, &item.OrganizationName, &item.EmployeeID, &item.EmployeeNo, &item.EmployeeName, &item.EmployeeOrganizationID, &item.EmployeeOrganizationName) == nil {
 			items = append(items, item)
 		}
 	}

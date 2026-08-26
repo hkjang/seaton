@@ -57,6 +57,10 @@ type Seat struct {
 	EmployeeID       *string  `json:"employeeId,omitempty"`
 	EmployeeNo       string   `json:"employeeNo,omitempty"`
 	EmployeeName     string   `json:"employeeName,omitempty"`
+	// 좌석맵에서 조직별 색상과 구역 불일치를 표시하려면 배정된 직원의 조직도 필요하다.
+	// OrganizationID 는 좌석에 지정된 구역, 아래는 실제로 앉은 직원의 소속이다.
+	EmployeeOrganizationID   *string `json:"employeeOrganizationId,omitempty"`
+	EmployeeOrganizationName string  `json:"employeeOrganizationName,omitempty"`
 }
 
 type ctxKey string
