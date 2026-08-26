@@ -4,17 +4,23 @@
  * 날짜·라벨·내보내기 형식은 화면 없이 검증할 수 있어야 하므로 여기 모아 둔다.
  */
 
-/** 좌석 변경이 어떤 경로로 일어났는지. 원문 값을 그대로 보여주지 않는다. */
+/**
+ * 좌석 변경이 어떤 경로로 일어났는지. 원문 값을 그대로 보여주지 않는다.
+ * 키는 서버가 seat_history.source 에 실제로 넣는 값과 일치해야 한다.
+ * 이력 화면의 "방식" 목록이 이 표에서 만들어지므로, 없는 값을 넣으면
+ * 고를 수는 있지만 결과가 없는 항목이 생기고 실제 값은 고를 수 없다.
+ */
 export const SOURCE_LABELS: Record<string, string> = {
   manual: "수동 배정",
   bulk: "일괄 등록",
+  dashboard: "처리필요에서 조치",
+  dashboard_bulk: "처리필요 일괄 조치",
   hr_sync: "인사 동기화",
-  import: "가져오기",
-  system: "시스템",
+  mcp: "MCP 연동",
 };
 
 export const sourceLabel = (source: string) =>
-  SOURCE_LABELS[source] ?? source ?? "-";
+  SOURCE_LABELS[source] || source || "-";
 
 /**
  * 방금 일어난 일은 상대 시간이 읽기 쉽고, 오래된 일은 절대 날짜가 정확하다.
@@ -86,4 +92,13 @@ export const dayRangeToISO = (from: string, to: string) => {
     from: start ? start.toISOString() : "",
     to: end ? end.toISOString() : "",
   };
+};
+
+/**
+ * 파일 이름에 쓸 오늘 날짜(YYYY-MM-DD). toISOString 은 UTC 기준이라
+ * 사용자가 고른 기간과 하루 어긋난 이름이 붙을 수 있어 로컬 달력을 쓴다.
+ */
+export const localDateStamp = (now: Date = new Date()) => {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 };

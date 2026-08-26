@@ -3,9 +3,11 @@ import {
   absoluteTime,
   csvCell,
   dayRangeToISO,
+  localDateStamp,
   startOfLocalDay,
   relativeTime,
   safeFileName,
+  SOURCE_LABELS,
   sourceLabel,
   toCSV,
 } from "./format";
@@ -15,8 +17,22 @@ describe("sourceLabel", () => {
     expect(sourceLabel("manual")).toBe("수동 배정");
     expect(sourceLabel("hr_sync")).toBe("인사 동기화");
   });
-  it("모르는 값은 그대로 보여준다", () => {
+  it("서버가 실제로 쓰는 값을 모두 다룬다", () => {
+    // 이 목록이 서버와 어긋나면 관리자가 고를 수 없는 방식이 생긴다.
+    // 값 출처: seats.go, sync.go, mcp.go, dashboard.go 의 source 인자.
+    for (const source of [
+      "manual",
+      "bulk",
+      "dashboard",
+      "dashboard_bulk",
+      "hr_sync",
+      "mcp",
+    ])
+      expect(SOURCE_LABELS[source]).toBeTruthy();
+  });
+  it("모르는 값은 그대로 보여주고, 빈 값은 대시로 바꾼다", () => {
     expect(sourceLabel("unknown_source")).toBe("unknown_source");
+    expect(sourceLabel("")).toBe("-");
   });
 });
 
@@ -102,5 +118,17 @@ describe("startOfLocalDay / dayRangeToISO", () => {
     expect(dayRangeToISO("", "")).toEqual({ from: "", to: "" });
     expect(startOfLocalDay("2026-8-2")).toBeNull();
     expect(startOfLocalDay("어제")).toBeNull();
+  });
+});
+
+describe("localDateStamp", () => {
+  it("UTC가 아니라 로컬 달력의 날짜를 쓴다", () => {
+    // KST 오전 8시는 UTC로는 전날이다. 파일 이름이 사용자가 고른 기간과
+    // 하루 어긋나면 안 된다.
+    const at = new Date(2026, 7, 26, 8, 0, 0);
+    expect(localDateStamp(at)).toBe("2026-08-26");
+  });
+  it("월과 일을 두 자리로 채운다", () => {
+    expect(localDateStamp(new Date(2026, 0, 5))).toBe("2026-01-05");
   });
 });
