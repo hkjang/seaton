@@ -1,6 +1,6 @@
 # SeatOn 엔터프라이즈 관리자 가이드 (Admin & Operational Guide)
 
-- **문서 버전**: v1.3.0-ENTERPRISE  
+- **문서 버전**: v1.4.0-ENTERPRISE  
 - **작성일자**: 2026년 8월 26일  
 - **대상**: 시스템 관리자, Security/DevOps 엔지니어, 시설/총무 책임자  
 - **문서 개요**: SeatOn 3대 환경변수 부트스트랩, Keycloak OIDC SSO, 이상 좌석 감지 규칙, 좌석 매핑 정확도 관리, 감사 이력·세션 운영, 판독 엔진(CV·VLM·하이브리드) 선택과 실측 비교, Master Key 보존 및 감사 로그 운영  
