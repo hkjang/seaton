@@ -27,6 +27,7 @@ import LayersRounded from "@mui/icons-material/LayersRounded";
 import UploadFileRounded from "@mui/icons-material/UploadFileRounded";
 import AutoAwesomeRounded from "@mui/icons-material/AutoAwesomeRounded";
 import PublishRounded from "@mui/icons-material/PublishRounded";
+import DeleteOutlineRounded from "@mui/icons-material/DeleteOutlineRounded";
 import GridOnRounded from "@mui/icons-material/GridOnRounded";
 import CheckCircleRounded from "@mui/icons-material/CheckCircleRounded";
 import RadioButtonCheckedRounded from "@mui/icons-material/RadioButtonCheckedRounded";
@@ -76,6 +77,23 @@ export function MapsPage() {
   useEffect(() => {
     void load();
   }, []);
+  // 잘못 올린 도면 버전을 지운다. 되돌릴 수 없는 조작이라 무엇을 지우는지 이름을
+  // 보여주고 한 번 더 확인받는다.
+  const [removing, setRemoving] = useState<FloorMap | null>(null);
+  const remove = async () => {
+    if (!removing) return;
+    try {
+      await api<void>(`/api/v1/floor-maps/${removing.id}`, {
+        method: "DELETE",
+      });
+      setMessage(`${removing.version} 버전을 삭제했습니다`);
+      setRemoving(null);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "삭제하지 못했습니다");
+      setRemoving(null);
+    }
+  };
   const action = async (path: string, label: string) => {
     try {
       const result = await api<{ message?: string }>(path, { method: "POST" });
@@ -411,18 +429,28 @@ export function MapsPage() {
                     배치 편집
                   </Button>
                   {!m.active && (
-                    <Button
-                      size="small"
-                      startIcon={<PublishRounded />}
-                      onClick={() =>
-                        void action(
-                          `/api/v1/floor-maps/${m.id}/publish`,
-                          "도면을 게시했습니다",
-                        )
-                      }
-                    >
-                      게시
-                    </Button>
+                    <>
+                      <Button
+                        size="small"
+                        startIcon={<PublishRounded />}
+                        onClick={() =>
+                          void action(
+                            `/api/v1/floor-maps/${m.id}/publish`,
+                            "도면을 게시했습니다",
+                          )
+                        }
+                      >
+                        게시
+                      </Button>
+                      <Button
+                        size="small"
+                        color="error"
+                        startIcon={<DeleteOutlineRounded />}
+                        onClick={() => setRemoving(m)}
+                      >
+                        삭제
+                      </Button>
+                    </>
                   )}
                 </CardActions>
               </Card>
@@ -456,6 +484,36 @@ export function MapsPage() {
           return load();
         }}
       />
+      <Dialog
+        open={Boolean(removing)}
+        onClose={() => setRemoving(null)}
+        fullWidth
+        maxWidth="xs"
+      >
+        <DialogTitle>도면 버전 삭제</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">
+            {removing?.buildingName} · {removing?.floorName}의{" "}
+            <strong>{removing?.version}</strong> 버전과 그 도면의 좌석
+            {removing?.seatCount ? ` ${removing.seatCount}석` : ""}을 지웁니다.
+            되돌릴 수 없습니다.
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            배정이나 변경 이력이 있는 도면은 이력을 지키기 위해 삭제되지
+            않습니다.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRemoving(null)}>취소</Button>
+          <Button
+            color="error"
+            variant="contained"
+            onClick={() => void remove()}
+          >
+            삭제
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

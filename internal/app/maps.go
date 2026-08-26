@@ -231,6 +231,44 @@ func (s *Server) mapPreview(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(preview)
 }
 
+// deleteFloorMap은 잘못 올린 도면 버전을 지운다.
+//
+// 게시 중인 도면과 이력이 남은 도면은 지우지 않는다. 좌석이 사라지면 변경 이력의
+// 좌석 참조가 비어 "누가 어디서 어디로 옮겼는지"를 잃기 때문이다. 실수로 올린
+// 버전은 배정도 이력도 없으므로 이 조건에 걸리지 않는다.
+func (s *Server) deleteFloorMap(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "mapID")
+	var active bool
+	if err := s.db.QueryRow(r.Context(), `SELECT is_active FROM floor_maps WHERE id=$1`, id).Scan(&active); err != nil {
+		notFoundOrServer(w, err)
+		return
+	}
+	if active {
+		writeError(w, http.StatusConflict, "map_published", "게시 중인 도면은 삭제할 수 없습니다. 다른 버전을 게시한 뒤 삭제하세요")
+		return
+	}
+	var used int
+	err := s.db.QueryRow(r.Context(), `SELECT count(*) FROM seats s
+                WHERE s.floor_map_id=$1 AND (
+                        EXISTS(SELECT 1 FROM seat_assignments a WHERE a.seat_id=s.id AND a.ended_at IS NULL)
+                        OR EXISTS(SELECT 1 FROM seat_history h WHERE h.previous_seat_id=s.id OR h.new_seat_id=s.id))`, id).Scan(&used)
+	if err != nil {
+		notFoundOrServer(w, err)
+		return
+	}
+	if used > 0 {
+		writeError(w, http.StatusConflict, "map_in_use", "배정이나 변경 이력이 있는 도면은 삭제할 수 없습니다")
+		return
+	}
+	if _, err := s.db.Exec(r.Context(), `DELETE FROM floor_maps WHERE id=$1`, id); err != nil {
+		notFoundOrServer(w, err)
+		return
+	}
+	u, _ := userFrom(r)
+	s.audit(r.Context(), u.ID, "floor_map.delete", "floor_map", id, r.RemoteAddr, nil)
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) publishFloorMap(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "mapID")
 	tx, err := s.db.Begin(r.Context())

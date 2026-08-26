@@ -18,8 +18,6 @@ test.describe("도면 업로드와 AI 분석", () => {
     );
   });
 
-  // 도면 버전은 지울 수 있는 API가 없어 실행할 때마다 하나씩 쌓인다. 게시하지는
-  // 않으므로 좌석맵이 보는 도면은 그대로고, 다른 검증에 영향을 주지 않는다.
   test("도면을 올리고 AI 분석까지 화면에서 끝낼 수 있다", async ({ page }) => {
     test.setTimeout(180_000);
     const problems = watchConsole(page);
@@ -49,6 +47,15 @@ test.describe("도면 업로드와 AI 분석", () => {
     await card.getByRole("button", { name: "AI 분석" }).click();
     await expect(card).not.toContainText("분석 전", { timeout: 150_000 });
     await expect(card).toContainText(/[1-9]\d*석/);
+
+    // 확인용으로 올린 버전은 지우고 끝낸다. 남겨 두면 실행할 때마다 도면 카드가
+    // 쌓여 다른 검증이 어느 카드를 보는지 흐려진다.
+    await card.getByRole("button", { name: "삭제" }).click();
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "삭제" })
+      .click();
+    await expect(page.getByText(`Version ${version}`)).toHaveCount(0);
     expect(problems()).toHaveLength(0);
   });
 });

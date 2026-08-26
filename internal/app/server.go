@@ -82,6 +82,7 @@ func (s *Server) Routes() http.Handler {
 				r.Post("/floor-maps/{mapID}/analyze", s.analyzeFloorMap)
 				r.Get("/analysis-jobs/{jobID}", s.analysisJobStatus)
 				r.Post("/floor-maps/{mapID}/publish", s.publishFloorMap)
+				r.Delete("/floor-maps/{mapID}", s.deleteFloorMap)
 				r.Put("/floor-maps/{mapID}/grid", s.updateFloorMapGrid)
 				r.Post("/floor-maps/{mapID}/seats/align", s.alignSeatsToGrid)
 				r.Post("/seats", s.createSeat)
