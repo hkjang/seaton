@@ -25,6 +25,7 @@
 - 예외 중심 관리자 작업 큐와 즉시 조치, 운영 준비도 및 연동 상태 대시보드
 - 좌석 직접 이동, Shift 다중 선택, 스냅·정렬·회전·Undo/Redo 배치 편집
 - 도면 팬·휠 확대, 검색 좌석 자동 이동, 미니맵, 조직별 색상과 구역 표시, 좌석 상태 필터
+- 변경 이력 검색·기간 필터와 CSV 내보내기, 세션 만료 시 로그인 안내
 - Keycloak OIDC Discovery + Authorization Code/PKCE + nonce 검증
 - Keycloak 그룹 기반 RBAC와 SSO 사용자 자동 생성
 - 설치별 암호화 키, 개인별 API 키 생성·회전·폐기·범위 제어
@@ -41,12 +42,12 @@
 외부 또는 사내 PostgreSQL 14+ 데이터베이스를 준비한다. SeatOn이 시작할 때 스키마를 자동 생성한다.
 
 ```bash
-docker load < SeatOn-v1.1.0-linux-amd64-image.tar.gz
+docker load < SeatOn-v1.2.0-linux-amd64-image.tar.gz
 
 export POSTGRES_DSN='postgres://seaton:password@postgres.intra:5432/seaton?sslmode=require'
 export BOOTSTRAP_ADMIN='admin'
 export BOOTSTRAP_ADMIN_PASSWORD='change-this-strong-password'
-export SEATON_IMAGE_TAG='1.1.0'
+export SEATON_IMAGE_TAG='1.2.0'
 docker compose up -d
 ```
 
@@ -115,11 +116,11 @@ PDF는 `docs/fonts/NanumGothic.ttf` 를 임베드하므로 한글 폰트가 없�
 
 ## 릴리스
 
-`v1.1.0` 형태의 태그를 push하면 GitHub Actions가 `linux/amd64` 서비스 이미지를 빌드하고 `docker save` 결과만 `tar.gz`로 GitHub Release에 첨부한다. 런타임에는 레지스트리나 인터넷이 필요 없다.
+`v1.2.0` 형태의 태그를 push하면 GitHub Actions가 `linux/amd64` 서비스 이미지를 빌드하고 `docker save` 결과만 `tar.gz`로 GitHub Release에 첨부한다. 런타임에는 레지스트리나 인터넷이 필요 없다.
 
 로컬 검증은 다음과 같다.
 
 ```bash
-./scripts/release-image.sh 1.1.0
-gzip -t SeatOn-v1.1.0-linux-amd64-image.tar.gz
+./scripts/release-image.sh 1.2.0
+gzip -t SeatOn-v1.2.0-linux-amd64-image.tar.gz
 ```

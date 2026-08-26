@@ -53,8 +53,8 @@
         <div class="header-meta">
             <h1>SeatOn 엔터프라이즈 중장기 기술 로드맵 (Product Roadmap Plan)</h1>
             <div class="meta-grid">
-                <div class="meta-item"><strong>문서 버전:</strong> v1.1.0 ~ v3.0-VISION</div>
-                <div class="meta-item"><strong>작성일자:</strong> 2026년 8월 11일</div>
+                <div class="meta-item"><strong>문서 버전:</strong> v1.2.0 ~ v3.0-VISION</div>
+                <div class="meta-item"><strong>작성일자:</strong> 2026년 8월 26일</div>
                 <div class="meta-item"><strong>문서 분류:</strong> 비즈니스 및 아키텍처 중장기 로드맵 (Strategic Product Roadmap)</div>
             </div>
         </div>
@@ -66,6 +66,7 @@
 ==================================================================================================
  [Phase 1: v1.0.0] (완료)    ➔ Offline CV Parsing, SVG Coordinate Engine, Anomaly Seat Detection
  [Phase 1.5: v1.1.0] (완료)  ➔ Pluggable Detection Engines (CV / VLM / Hybrid), Grid Calibration
+ [Phase 1.6: v1.2.0] (완료)  ➔ SeatMap Navigation &amp; Org Overlay, Admin Screen Consistency
  [Phase 2: v1.5.0] (진행)    ➔ Multi-Building Floorplan Sync &amp; Real-Time IoT Sensor Integration
  [Phase 3: v2.0.0] (2026 Q4) ➔ AI Auto Seat Allocation Copilot (NL-to-Space Action MCP 2.0)
  [Phase 4: v3.0.0] (2027)    ➔ Predictive Office Space Analytics &amp; Autonomous Energy Saving
@@ -90,13 +91,24 @@
             <li><strong>교차 검증(하이브리드)</strong>: CV의 기하 정확도와 VLM의 의미 이해를 IoU로 교차 검증하고, 보정되지 않은 모델 확신도가 자동 승인으로 이어지지 않도록 신뢰도 상한을 둠.</li>
             <li><strong>비동기 분석 작업</strong>: 판독을 백그라운드 잡으로 분리해 장시간 추론이 HTTP 응답 제한에 걸리지 않게 하고, 중단된 작업을 자동 복구.</li>
         </ul>
-        <h3>2.3 Phase 2: v1.5.0 멀티 사옥 도면 동기화 &amp; 실시간 센서 연동 (2026 Q3)</h3>
+        <h3>2.3 Phase 1.6: v1.2.0 좌석맵 탐색과 관리자 화면 정비 (완료)</h3>
+        <p>판독 정확도를 확보한 뒤 남은 마찰은 <strong>큰 도면을 다루는 방법</strong>과 <strong>화면 전반의 일관성</strong>이었습니다.</p>
+        <ul>
+            <li><strong>좌석맵 탐색</strong>: 스크롤 확대를 뷰포트 기반 캔버스로 바꿔 화면 이동과 커서 기준 확대를 지원합니다. 검색으로 찾은 좌석은 중앙으로 이동하며 확대되고, 미니맵이 현재 영역을 보여줍니다.</li>
+            <li><strong>조직 시각화</strong>: 좌석 색상을 상태 또는 조직 기준으로 전환하고, 조직 구역을 배경으로 표시합니다. 좌석 API가 착석자의 소속을 함께 내려주어 구역 불일치를 화면에서 바로 구분합니다.</li>
+            <li><strong>좌석 렌더 분리</strong>: 좌석을 개별 memo 단위로 나눠 화면 이동·확대가 좌석 목록을 다시 그리지 않습니다.</li>
+            <li><strong>감사 이력 조회</strong>: 검색·방식·기간 필터와 CSV 내보내기를 더했습니다. 기간 경계는 사용자 시간대로 계산하고, 건수 집계는 상한에서 끊어 이력이 쌓여도 전체 스캔이 되지 않습니다.</li>
+            <li><strong>화면 일관성</strong>: 모든 관리자 화면에 로딩·빈 상태를 공통 컴포넌트로 적용해 "아직 못 불러왔다"와 "데이터가 없다"를 구분합니다.</li>
+            <li><strong>세션 만료 안내</strong>: 세션이 끊기면 한 곳에서 정리해 로그인으로 안내합니다.</li>
+            <li><strong>집계 비용 절감</strong>: 상단 배지 전용 집계를 분리하고 대시보드 집계를 제한된 동시성으로 실행합니다.</li>
+        </ul>
+        <h3>2.4 Phase 2: v1.5.0 멀티 사옥 도면 동기화 &amp; 실시간 센서 연동 (2026 Q3)</h3>
         <ul>
             <li><strong>다중 건물/사옥 통합 뷰</strong>: 본사, 지사, R&amp;D 센터 멀티 사옥 레이아웃 통합 관리.</li>
             <li><strong>IoT 모션 센서 연동</strong>: 좌석 재실 센서 데이터 실시간 바인딩.</li>
             <li><strong>도면 버전 간 좌석 이관</strong>: 새 도면 버전을 올릴 때 이전 버전의 좌석과 배정을 좌표 기준으로 자동 승계.</li>
         </ul>
-        <h3>2.4 Phase 3: v2.0.0 AI 자율 좌석 코파일럿 (2026 Q4)</h3>
+        <h3>2.5 Phase 3: v2.0.0 AI 자율 좌석 코파일럿 (2026 Q4)</h3>
         <ul>
             <li><strong>NL-to-Space Action (MCP 2.0)</strong>: "10층 개발팀 구역 근처에 빈 좌석 찾아 배정해줘" 같은 요청을 권한 검증 후 자동 처리.</li>
             <li><strong>판독 품질 피드백 루프</strong>: 관리자가 교정한 좌석을 판독 품질 지표로 축적해 엔진·프롬프트 선택을 데이터로 결정.</li>
