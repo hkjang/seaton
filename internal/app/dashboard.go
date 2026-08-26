@@ -1,8 +1,10 @@
 package app
 
 import (
+	"context"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -28,8 +30,54 @@ type dashboardIssue struct {
 	Action           string     `json:"action"`
 }
 
-func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
+// actionCountQueries는 관리자가 처리해야 할 건수만 센다. 상단 배지가 화면을
+// 옮길 때마다 대시보드 전체(13개 쿼리)를 부르던 것을 이 네 개로 줄인다.
+var actionCountQueries = map[string]string{
+	"unassignedEmployees": `SELECT count(*) FROM employees e WHERE e.status='active' AND NOT EXISTS(SELECT 1 FROM seat_assignments a WHERE a.employee_id=e.id AND a.ended_at IS NULL)`,
+	"retiredAssignments":  `SELECT count(*) FROM seat_assignments a JOIN employees e ON e.id=a.employee_id WHERE a.ended_at IS NULL AND e.status='retired'`,
+	"organizationMismatch": `SELECT count(*) FROM seat_assignments a JOIN employees e ON e.id=a.employee_id JOIN seats s ON s.id=a.seat_id
+			WHERE a.ended_at IS NULL AND s.organization_id IS NOT NULL AND e.organization_id IS DISTINCT FROM s.organization_id`,
+	"lowConfidenceSeats": `SELECT count(*) FROM seats s JOIN floor_maps m ON m.id=s.floor_map_id WHERE m.is_active AND s.confidence IS NOT NULL AND s.confidence < 0.95`,
+}
+
+// countAll은 이름이 붙은 집계 쿼리들을 동시에 실행한다. 순차로 돌리면 쿼리
+// 수만큼 왕복 지연이 쌓인다.
+func (s *Server) countAll(ctx context.Context, queries map[string]string) map[string]int {
+	type result struct {
+		key   string
+		count int
+	}
+	channel := make(chan result, len(queries))
+	var group sync.WaitGroup
+	for key, query := range queries {
+		group.Add(1)
+		go func(key, query string) {
+			defer group.Done()
+			var count int
+			_ = s.db.QueryRow(ctx, query).Scan(&count)
+			channel <- result{key, count}
+		}(key, query)
+	}
+	group.Wait()
+	close(channel)
 	counts := map[string]int{}
+	for item := range channel {
+		counts[item.key] = item.count
+	}
+	return counts
+}
+
+// actionCount는 상단 배지 전용의 가벼운 집계다.
+func (s *Server) actionCount(w http.ResponseWriter, r *http.Request) {
+	counts := s.countAll(r.Context(), actionCountQueries)
+	total := 0
+	for _, count := range counts {
+		total += count
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"actionRequired": total, "counts": counts})
+}
+
+func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	queries := map[string]string{
 		"unassignedEmployees": `SELECT count(*) FROM employees e WHERE e.status='active' AND NOT EXISTS(SELECT 1 FROM seat_assignments a WHERE a.employee_id=e.id AND a.ended_at IS NULL)`,
 		"unusedSeats":         `SELECT count(*) FROM seats s JOIN floor_maps m ON m.id=s.floor_map_id WHERE m.is_active AND s.status='available' AND NOT EXISTS(SELECT 1 FROM seat_assignments a WHERE a.seat_id=s.id AND a.ended_at IS NULL)`,
@@ -46,11 +94,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		"floors":             `SELECT count(*) FROM floors`,
 		"activeMaps":         `SELECT count(*) FROM floor_maps WHERE is_active`,
 	}
-	for key, query := range queries {
-		var count int
-		_ = s.db.QueryRow(r.Context(), query).Scan(&count)
-		counts[key] = count
-	}
+	counts := s.countAll(r.Context(), queries)
 	counts["actionRequired"] = counts["unassignedEmployees"] + counts["retiredAssignments"] + counts["organizationMismatch"] + counts["lowConfidenceSeats"]
 
 	oidcEnabled, _ := s.getSetting(r.Context(), "oidc.enabled")

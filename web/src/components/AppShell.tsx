@@ -95,10 +95,12 @@ export function AppShell() {
     window.addEventListener("keydown", keyboard);
     return () => window.removeEventListener("keydown", keyboard);
   }, []);
+  // 배지 숫자만 필요하므로 대시보드 전체가 아니라 전용 집계를 부른다.
+  // 화면을 옮길 때마다 13개 쿼리를 돌리던 것을 4개로 줄인다.
   useEffect(() => {
     if (!manager) return;
-    api<{ counts: { actionRequired: number } }>("/api/v1/dashboard")
-      .then((data) => setActionCount(data.counts.actionRequired))
+    api<{ actionRequired: number }>("/api/v1/dashboard/action-count")
+      .then((data) => setActionCount(data.actionRequired))
       .catch(() => undefined);
   }, [manager, location.pathname]);
   useEffect(() => {
