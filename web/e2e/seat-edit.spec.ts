@@ -65,11 +65,18 @@ test.describe("좌석 배치 편집", () => {
 
   test("실행 취소로 옮기기 전 자리로 돌아간다", async ({ page }) => {
     const before = await seatAt(page, "이코딩");
+    const savedBefore = await saved(page, "이코딩");
     await select(page, "이코딩");
     await page.keyboard.press("ArrowDown");
     await expect
       .poll(async () => (await seatAt(page, "이코딩")).y)
       .toBeGreaterThan(before.y);
+    // 저장이 끝나기 전에 실행 취소를 누르면 두 요청이 앞뒤로 엇갈린다. 서버가
+    // 옮긴 자리를 받아들인 것을 확인한 뒤에 되돌린다. 서버는 비율 좌표를 쓰므로
+    // 화면 좌표와 섞어 비교하지 않는다.
+    await expect
+      .poll(async () => saved(page, "이코딩"))
+      .toBeGreaterThan(savedBefore);
 
     await page.keyboard.press("ControlOrMeta+z");
     await expect
@@ -107,6 +114,14 @@ test.describe("좌석 배치 편집", () => {
       .toBeCloseTo(moved.y, 1);
   });
 });
+
+/** 서버에 저장된 좌석의 세로 위치(비율 좌표). */
+const saved = async (page: Page, name: string) => {
+  const seat = (await fetchSeats(page)).find(
+    (item) => item.employeeName === name,
+  );
+  return seat ? seat.y : -1;
+};
 
 /** 좌석을 눌러 선택한다. 방향키 미세 이동은 선택된 좌석에만 걸린다. */
 const select = async (page: Page, name: string) => {

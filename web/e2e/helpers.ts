@@ -23,7 +23,12 @@ export const seatLabels = async (page: Page) =>
  */
 export const fetchSeats = async (page: Page) => {
   const maps = await (await page.request.get("/api/v1/floor-maps")).json();
-  const mapId = maps.items[0].id;
+  // 도면 버전은 여러 개일 수 있다. 좌석맵이 보여주는 것은 게시된 버전이므로
+  // 그 버전의 좌석을 읽어야 화면에서 본 것과 같은 좌석을 다룬다.
+  const map =
+    maps.items.find((item: { active?: boolean }) => item.active) ??
+    maps.items[0];
+  const mapId = map.id;
   const seats = await (
     await page.request.get(`/api/v1/seats?floorMapId=${mapId}`)
   ).json();
