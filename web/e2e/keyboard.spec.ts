@@ -42,6 +42,60 @@ test.describe("키보드 조작", () => {
     await expect(page.getByText(/^\d+%$/)).not.toHaveText("100%");
   });
 
+  test("도면 위 좌석을 방향키로 옮겨 다닌다", async ({ page }) => {
+    await login(page);
+    await mapCanvas(page).waitFor();
+    const focused = () =>
+      page.evaluate(
+        () => document.activeElement?.getAttribute("aria-label") ?? "",
+      );
+
+    // 좌석은 탭 순서에 딱 하나만 들어온다. 좌석 수백 개를 모두 훑게 하면 도면을
+    // 지나 다음 조작으로 가는 데만 수백 번을 눌러야 한다.
+    await page.locator("body").click({ position: { x: 5, y: 5 } });
+    const stops: string[] = [];
+    for (let i = 0; i < 30; i++) {
+      await page.keyboard.press("Tab");
+      stops.push(await focused());
+    }
+    expect(stops.filter((name) => name.startsWith("HQ-3F-"))).toHaveLength(1);
+
+    await page.evaluate(() =>
+      document.querySelector<SVGGElement>("[data-seat-id]")?.focus(),
+    );
+    expect(await focused()).toContain("HQ-3F-001");
+    await page.keyboard.press("ArrowRight");
+    expect(await focused()).toContain("HQ-3F-002");
+    await page.keyboard.press("ArrowDown");
+    expect(await focused()).toContain("HQ-3F-008");
+    await page.keyboard.press("ArrowUp");
+    expect(await focused()).toContain("HQ-3F-002");
+    await page.keyboard.press("End");
+    expect(await focused()).toContain("HQ-3F-030");
+    await page.keyboard.press("Home");
+    expect(await focused()).toContain("HQ-3F-001");
+
+    await page.keyboard.press("Enter");
+    await expect(
+      page.getByRole("heading", { name: "HQ-3F-001" }),
+    ).toBeVisible();
+  });
+
+  test("좌석에 초점이 있으면 방향키가 화면을 밀지 않는다", async ({ page }) => {
+    await login(page);
+    await mapCanvas(page).waitFor();
+    // 좌석 초점이 옮겨 가는 동시에 화면까지 밀리면 두 번 움직여 어디를 보고
+    // 있는지 잃는다.
+    const viewBox = () => mapCanvas(page).getAttribute("viewBox");
+    await page.evaluate(() =>
+      document.querySelector<SVGGElement>("[data-seat-id]")?.focus(),
+    );
+    const before = await viewBox();
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowDown");
+    expect(await viewBox()).toBe(before);
+  });
+
   test("아이콘만 있는 조작에도 이름이 붙어 있다", async ({ page }) => {
     await login(page);
     await mapCanvas(page).waitFor();

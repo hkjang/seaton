@@ -7,8 +7,10 @@ import {
   needsReviewSeat,
   seatColor,
   seatHighlighted,
+  nextSeatInDirection,
   seatLabelLayout,
   seatOrgId,
+  seatsInReadingOrder,
   seatUnavailable,
   shortSeatNo,
   zoomTier,
@@ -256,5 +258,61 @@ describe("seatLabelLayout", () => {
 
   it("작은 좌석도 확대하면 라벨이 나타난다", () => {
     expect(seatLabelLayout("A1", 12, 8, 4).show).toBe(true);
+  });
+});
+
+describe("nextSeatInDirection", () => {
+  // 3×2 격자. 좌석 크기 0.1×0.1, 간격 0.2.
+  const grid = [0, 1].flatMap((row) =>
+    [0, 1, 2].map((col) =>
+      seat({
+        id: `r${row}c${col}`,
+        x: 0.1 + col * 0.2,
+        y: 0.1 + row * 0.2,
+        width: 0.1,
+        height: 0.1,
+      }),
+    ),
+  );
+
+  it("오른쪽 옆자리로 간다", () => {
+    expect(nextSeatInDirection(grid, "r0c0", "right")?.id).toBe("r0c1");
+  });
+
+  it("아래 줄로 간다", () => {
+    expect(nextSeatInDirection(grid, "r0c1", "down")?.id).toBe("r1c1");
+  });
+
+  it("끝에서는 더 가지 않는다", () => {
+    expect(nextSeatInDirection(grid, "r0c2", "right")).toBeNull();
+    expect(nextSeatInDirection(grid, "r0c0", "up")).toBeNull();
+  });
+
+  it("줄이 살짝 어긋나도 옆자리로 이어진다", () => {
+    const skewed = [
+      seat({ id: "a", x: 0.1, y: 0.1, width: 0.05, height: 0.05 }),
+      seat({ id: "b", x: 0.3, y: 0.12, width: 0.05, height: 0.05 }),
+      seat({ id: "c", x: 0.32, y: 0.4, width: 0.05, height: 0.05 }),
+    ];
+    expect(nextSeatInDirection(skewed, "a", "right")?.id).toBe("b");
+  });
+
+  it("모르는 좌석에서 시작하면 첫 좌석을 준다", () => {
+    expect(nextSeatInDirection(grid, "없음", "right")?.id).toBe("r0c0");
+  });
+});
+
+describe("seatsInReadingOrder", () => {
+  it("위에서 아래, 왼쪽에서 오른쪽으로 정렬한다", () => {
+    const seats = [
+      seat({ id: "b", x: 0.5, y: 0.1, width: 0.1, height: 0.1 }),
+      seat({ id: "c", x: 0.1, y: 0.4, width: 0.1, height: 0.1 }),
+      seat({ id: "a", x: 0.1, y: 0.1, width: 0.1, height: 0.1 }),
+    ];
+    expect(seatsInReadingOrder(seats).map((s) => s.id)).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
   });
 });
