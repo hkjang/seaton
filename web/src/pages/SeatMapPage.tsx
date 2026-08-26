@@ -1406,65 +1406,88 @@ export function SeatMapPage() {
                 : "사람 또는 조직을 검색하세요"}
             </Typography>
             <Stack spacing={0.75} sx={{ overflowY: "auto" }}>
-              {employees.map((e) => (
-                <Box
-                  key={e.id}
-                  draggable={manager}
-                  onDragStart={(event) =>
-                    event.dataTransfer.setData(
-                      "application/seaton-employee",
-                      e.id,
-                    )
-                  }
-                  onClick={() => {
-                    const seat = seats.find((s) => s.id === e.seatId);
-                    if (seat) {
-                      setSelected(seat);
-                      focusSeat(seat);
+              {employees.map((e) => {
+                const show = () => {
+                  const seat = seats.find((s) => s.id === e.seatId);
+                  if (!seat) return;
+                  setSelected(seat);
+                  focusSeat(seat);
+                };
+                return (
+                  <Box
+                    key={e.id}
+                    draggable={manager}
+                    onDragStart={(event) =>
+                      event.dataTransfer.setData(
+                        "application/seaton-employee",
+                        e.id,
+                      )
                     }
-                  }}
-                  sx={{
-                    display: "flex",
-                    gap: 1.2,
-                    p: 1,
-                    borderRadius: 2,
-                    cursor: e.seatId ? "pointer" : "default",
-                    "&:hover": { bgcolor: "#F1F6F7" },
-                  }}
-                >
-                  <Avatar
+                    // 검색 결과는 마우스로만 고를 수 있었다. 좌석은 도면 위 그림이라
+                    // 탭으로 닿지 않으므로, 키보드 사용자에게는 이 목록이 좌석을
+                    // 고르는 유일한 길이다.
+                    role={e.seatId ? "button" : undefined}
+                    tabIndex={e.seatId ? 0 : undefined}
+                    aria-label={
+                      e.seatId
+                        ? `${e.name} · ${e.organizationName || "소속 없음"} · ${e.seatNo} 좌석 보기`
+                        : undefined
+                    }
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        show();
+                      }
+                    }}
+                    onClick={show}
                     sx={{
-                      width: 34,
-                      height: 34,
-                      fontSize: 13,
-                      bgcolor: e.seatId ? "primary.main" : "grey.400",
+                      display: "flex",
+                      gap: 1.2,
+                      p: 1,
+                      borderRadius: 2,
+                      cursor: e.seatId ? "pointer" : "default",
+                      "&:hover": { bgcolor: "#F1F6F7" },
+                      "&:focus-visible": {
+                        outline: "2px solid",
+                        outlineColor: "primary.main",
+                        outlineOffset: 2,
+                      },
                     }}
                   >
-                    {e.name.slice(0, 1)}
-                  </Avatar>
-                  <Box minWidth={0}>
-                    <Typography variant="body2" fontWeight={700} noWrap>
-                      {e.name}{" "}
+                    <Avatar
+                      sx={{
+                        width: 34,
+                        height: 34,
+                        fontSize: 13,
+                        bgcolor: e.seatId ? "primary.main" : "grey.400",
+                      }}
+                    >
+                      {e.name.slice(0, 1)}
+                    </Avatar>
+                    <Box minWidth={0}>
+                      <Typography variant="body2" fontWeight={700} noWrap>
+                        {e.name}{" "}
+                        <Typography
+                          component="span"
+                          variant="caption"
+                          color="text.secondary"
+                        >
+                          {e.employeeNo}
+                        </Typography>
+                      </Typography>
                       <Typography
-                        component="span"
                         variant="caption"
                         color="text.secondary"
+                        noWrap
+                        display="block"
                       >
-                        {e.employeeNo}
+                        {e.organizationName || "소속 없음"} ·{" "}
+                        {e.seatNo || "미배정"}
                       </Typography>
-                    </Typography>
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      noWrap
-                      display="block"
-                    >
-                      {e.organizationName || "소속 없음"} ·{" "}
-                      {e.seatNo || "미배정"}
-                    </Typography>
+                    </Box>
                   </Box>
-                </Box>
-              ))}
+                );
+              })}
             </Stack>
           </Paper>
           <Paper
