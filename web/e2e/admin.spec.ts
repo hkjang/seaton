@@ -1,5 +1,11 @@
 import { expect, test } from "@playwright/test";
-import { fetchSeats, keepingSeats, login, watchConsole } from "./helpers";
+import {
+  employeeId,
+  fetchSeats,
+  keepingSeats,
+  login,
+  watchConsole,
+} from "./helpers";
 
 test.describe("관리 화면", () => {
   test.beforeEach(async ({ page }) => login(page));
@@ -13,37 +19,47 @@ test.describe("관리 화면", () => {
     // 같은 좌석으로 다시 배정하면 아무 일도 일어나지 않아 이력이 남지 않는다.
     // 빈 좌석으로 옮겨 이력을 만들고, 확인이 끝나면 제자리로 돌린다.
     const target = seats.find((seat) => !seat.employeeName)!;
+    const stampedReason = `오늘 확인 ${Date.now()}`;
     await keepingSeats(page, ["윤총무"], async () => {
-      await page.request.post("/api/v1/seat-assignments", {
+      const moved = await page.request.post("/api/v1/seat-assignments", {
         headers: { "X-CSRF-Token": me.csrfToken },
         data: {
-          employeeId: (
-            await (await page.request.get("/api/v1/employees?q=윤총무")).json()
-          ).items[0].id,
+          employeeId: await employeeId(page, "윤총무"),
           seatId: target.id,
           source: "manual",
-          reason: `오늘 확인 ${Date.now()}`,
+          reason: stampedReason,
         },
       });
+      expect(moved.ok(), await moved.text()).toBe(true);
 
       await page.goto("/admin/history");
       await expect(page.getByText(/전체 \d+건 중 \d+건/)).toBeVisible();
-      const rows = page.locator("tbody tr");
-      await expect(rows.first()).toBeVisible();
+      // 필터를 걸기 전에 방금 만든 변경이 목록에 있는지 먼저 확인한다. 여기서
+      // 이미 없다면 날짜 해석이 아니라 변경 자체가 만들어지지 않은 것이다.
+      await expect(page.getByText(stampedReason)).toBeVisible();
+
+      const day = (date: Date) =>
+        `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+      const setRange = async (from: string, to: string) => {
+        const start = page.getByLabel("시작일");
+        const end = page.getByLabel("종료일");
+        await start.fill(from);
+        await end.fill(to);
+        // 날짜 칸은 브라우저마다 다루는 방식이 달라, 값이 실제로 들어갔는지
+        // 확인하고 조회한다. 값이 비면 조건 없이 조회한 것과 구분되지 않는다.
+        await expect(start).toHaveValue(from);
+        await expect(end).toHaveValue(to);
+        await page.getByRole("button", { name: "조회" }).click();
+      };
 
       const today = new Date();
-      const stamp = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-      await page.getByLabel("시작일").fill(stamp);
-      await page.getByLabel("종료일").fill(stamp);
-      await page.getByRole("button", { name: "조회" }).click();
-      await expect(page.getByText(/오늘 확인 \d+/).first()).toBeVisible();
+      await setRange(day(today), day(today));
+      await expect(page.getByText(stampedReason)).toBeVisible();
+
       // 내일부터로 좁히면 방금 한 변경은 빠져야 한다.
       const tomorrow = new Date(today.getTime() + 86400000);
-      const next = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, "0")}-${String(tomorrow.getDate()).padStart(2, "0")}`;
-      await page.getByLabel("시작일").fill(next);
-      await page.getByLabel("종료일").fill(next);
-      await page.getByRole("button", { name: "조회" }).click();
-      await expect(page.getByText(/오늘 확인 \d+/)).toHaveCount(0);
+      await setRange(day(tomorrow), day(tomorrow));
+      await expect(page.getByText(stampedReason)).toHaveCount(0);
     });
   });
 

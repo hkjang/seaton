@@ -62,7 +62,7 @@ export const csrfToken = async (page: Page) =>
   (await (await page.request.get("/api/v1/auth/me")).json())
     .csrfToken as string;
 
-const employeeId = async (page: Page, name: string) => {
+export const employeeId = async (page: Page, name: string) => {
   const found = await (
     await page.request.get(`/api/v1/employees?q=${encodeURIComponent(name)}`)
   ).json();
