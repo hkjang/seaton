@@ -42,12 +42,12 @@
 외부 또는 사내 PostgreSQL 14+ 데이터베이스를 준비한다. SeatOn이 시작할 때 스키마를 자동 생성한다.
 
 ```bash
-docker load < SeatOn-v1.3.0-linux-amd64-image.tar.gz
+docker load < SeatOn-v1.4.0-linux-amd64-image.tar.gz
 
 export POSTGRES_DSN='postgres://seaton:password@postgres.intra:5432/seaton?sslmode=require'
 export BOOTSTRAP_ADMIN='admin'
 export BOOTSTRAP_ADMIN_PASSWORD='change-this-strong-password'
-export SEATON_IMAGE_TAG='1.3.0'
+export SEATON_IMAGE_TAG='1.4.0'
 docker compose up -d
 ```
 
@@ -132,11 +132,11 @@ PDF는 `docs/fonts/NanumGothic.ttf` 를 임베드하므로 한글 폰트가 없�
 
 ## 릴리스
 
-`v1.3.0` 형태의 태그를 push하면 GitHub Actions가 `linux/amd64` 서비스 이미지를 빌드하고 `docker save` 결과만 `tar.gz`로 GitHub Release에 첨부한다. 런타임에는 레지스트리나 인터넷이 필요 없다.
+`v1.4.0` 형태의 태그를 push하면 GitHub Actions가 `linux/amd64` 서비스 이미지를 빌드하고 `docker save` 결과만 `tar.gz`로 GitHub Release에 첨부한다. 런타임에는 레지스트리나 인터넷이 필요 없다.
 
 로컬 검증은 다음과 같다.
 
 ```bash
-./scripts/release-image.sh 1.3.0
-gzip -t SeatOn-v1.3.0-linux-amd64-image.tar.gz
+./scripts/release-image.sh 1.4.0
+gzip -t SeatOn-v1.4.0-linux-amd64-image.tar.gz
 ```
