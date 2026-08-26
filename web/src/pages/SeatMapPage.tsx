@@ -1357,9 +1357,13 @@ export function SeatMapPage() {
         <Box
           sx={{
             display: "grid",
+            // 세 칸의 최소 폭을 합치면 1280px 노트북 화면을 넘겨 상세 패널이
+            // 잘려 나갔다. 도면 칸이 줄어들 수 있게 두고, 넓은 화면에서만 양옆을
+            // 넉넉히 준다.
             gridTemplateColumns: {
               xs: "1fr",
-              lg: "260px minmax(500px,1fr) 270px",
+              lg: "220px minmax(0, 1fr) 240px",
+              xl: "260px minmax(0, 1fr) 280px",
             },
             gap: 2,
             flex: 1,
