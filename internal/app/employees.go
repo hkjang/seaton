@@ -1,9 +1,11 @@
 package app
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func (s *Server) listOrganizations(w http.ResponseWriter, r *http.Request) {
@@ -196,6 +198,18 @@ func (s *Server) importEmployees(w http.ResponseWriter, r *http.Request) {
 // 사용자가 자기 시간대 기준으로 고른 "오늘"이 서버에서는 다른 날이 되어
 // 방금 만든 기록이 조회되지 않는다. 경계 계산은 사용자의 시간대를 아는
 // 브라우저가 맡고, 서버는 받은 구간을 그대로 쓴다. to 는 열린 구간이다.
+// 이력 조회 상한. COUNT 를 이 값에서 끊어 감사 테이블이 커져도 전체 스캔이
+// 되지 않게 한다. 넘어가면 화면에 "N+"로 보여준다.
+const historyCountCap = 5000
+
+// listHistory는 좌석 변경 이력을 조회한다. 감사 목적의 화면이라 사람/좌석
+// 검색과 방식·기간 필터가 필요하고, 화면에서 "몇 건 중 몇 건"을 보여줄 수
+// 있도록 필터에 걸린 건수도 함께 돌려준다.
+//
+// from/to 는 시각(RFC3339)으로 받는다. 날짜만 받아 서버 시간대로 해석하면
+// 사용자가 자기 시간대 기준으로 고른 "오늘"이 서버에서는 다른 날이 되어
+// 방금 만든 기록이 조회되지 않는다. 경계 계산은 사용자의 시간대를 아는
+// 브라우저가 맡고, 서버는 받은 구간을 그대로 쓴다. to 는 열린 구간이다.
 func (s *Server) listHistory(w http.ResponseWriter, r *http.Request) {
 	limit := 100
 	if v, _ := strconv.Atoi(r.URL.Query().Get("limit")); v > 0 && v <= 500 {
@@ -205,24 +219,68 @@ func (s *Server) listHistory(w http.ResponseWriter, r *http.Request) {
 	source := strings.TrimSpace(r.URL.Query().Get("source"))
 	from := strings.TrimSpace(r.URL.Query().Get("from"))
 	to := strings.TrimSpace(r.URL.Query().Get("to"))
-	// 필터 조건은 목록과 건수 집계가 똑같이 써야 하므로 한 곳에 둔다.
-	const where = `WHERE ($1='' OR e.name ILIKE '%%'||$1||'%%' OR e.employee_no ILIKE '%%'||$1||'%%'
-		OR ps.seat_no ILIKE '%%'||$1||'%%' OR ns.seat_no ILIKE '%%'||$1||'%%')
-	AND ($2='' OR h.source=$2)
-	AND ($3='' OR h.changed_at >= $3::timestamptz)
-	AND ($4='' OR h.changed_at < $4::timestamptz)`
+	// 시각은 여기서 검증한다. DB 오류로 넘기면 일시적인 장애까지 "조건이 잘못됐다"로
+	// 보고하게 된다.
+	parseBound := func(value string) (any, bool) {
+		if value == "" {
+			return nil, true
+		}
+		at, err := time.Parse(time.RFC3339, value)
+		if err != nil {
+			return nil, false
+		}
+		return at, true
+	}
+	fromAt, okFrom := parseBound(from)
+	toAt, okTo := parseBound(to)
+	if !okFrom || !okTo {
+		writeError(w, http.StatusBadRequest, "invalid_filter", "기간은 RFC3339 시각이어야 합니다")
+		return
+	}
+	// 조건을 실제로 주어진 것만 붙인다. ($n='' OR ...) 형태는 인덱스를 타지 못해
+	// 기간을 좁혀도 이력 전체를 훑게 된다.
+	conditions := []string{}
+	args := []any{}
+	add := func(clause string, value any) {
+		args = append(args, value)
+		conditions = append(conditions, fmt.Sprintf(clause, len(args)))
+	}
+	if query != "" {
+		add(`(e.name ILIKE '%%'||$%[1]d||'%%' OR e.employee_no ILIKE '%%'||$%[1]d||'%%'
+			OR ps.seat_no ILIKE '%%'||$%[1]d||'%%' OR ns.seat_no ILIKE '%%'||$%[1]d||'%%')`, query)
+	}
+	if source != "" {
+		add(`h.source=$%d`, source)
+	}
+	if fromAt != nil {
+		add(`h.changed_at >= $%d`, fromAt)
+	}
+	if toAt != nil {
+		add(`h.changed_at < $%d`, toAt)
+	}
+	where := ""
+	if len(conditions) > 0 {
+		where = "WHERE " + strings.Join(conditions, " AND ")
+	}
 	const joins = `FROM seat_history h
 	LEFT JOIN employees e ON e.id=h.employee_id
 	LEFT JOIN seats ps ON ps.id=h.previous_seat_id
 	LEFT JOIN seats ns ON ns.id=h.new_seat_id
 	LEFT JOIN users u ON u.id=h.changed_by`
+	// 상한까지만 세고 끊는다. 감사 테이블은 계속 쌓이므로 무제한 COUNT 는
+	// 화면을 열 때마다 전체 스캔이 된다.
 	total := 0
-	if err := s.db.QueryRow(r.Context(), `SELECT COUNT(*) `+joins+" "+where, query, source, from, to).Scan(&total); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_filter", "조회 조건을 확인하세요")
+	countArgs := append(append([]any{}, args...), historyCountCap)
+	countSQL := fmt.Sprintf(`SELECT count(*) FROM (SELECT 1 %s %s LIMIT $%d) capped`,
+		joins, where, len(countArgs))
+	if err := s.db.QueryRow(r.Context(), countSQL, countArgs...).Scan(&total); err != nil {
+		notFoundOrServer(w, err)
 		return
 	}
-	rows, err := s.db.Query(r.Context(), `SELECT h.id,h.changed_at,COALESCE(e.employee_no,''),COALESCE(e.name,''),COALESCE(ps.seat_no,''),COALESCE(ns.seat_no,''),COALESCE(u.display_name,'System'),COALESCE(h.reason,''),h.source `+
-		joins+" "+where+` ORDER BY h.changed_at DESC LIMIT $5`, query, source, from, to, limit)
+	listArgs := append(append([]any{}, args...), limit)
+	listSQL := fmt.Sprintf(`SELECT h.id,h.changed_at,COALESCE(e.employee_no,''),COALESCE(e.name,''),COALESCE(ps.seat_no,''),COALESCE(ns.seat_no,''),COALESCE(u.display_name,'System'),COALESCE(h.reason,''),h.source %s %s ORDER BY h.changed_at DESC LIMIT $%d`,
+		joins, where, len(listArgs))
+	rows, err := s.db.Query(r.Context(), listSQL, listArgs...)
 	if err != nil {
 		notFoundOrServer(w, err)
 		return
@@ -236,5 +294,9 @@ func (s *Server) listHistory(w http.ResponseWriter, r *http.Request) {
 			items = append(items, map[string]any{"id": id, "changedAt": changed, "employeeNo": employeeNo, "employeeName": name, "previousSeat": previous, "newSeat": next, "actor": actor, "reason": reason, "source": source})
 		}
 	}
-	writeJSON(w, 200, map[string]any{"items": items, "total": total, "limit": limit})
+	writeJSON(w, 200, map[string]any{
+		"items": items, "total": total, "limit": limit,
+		// 상한에 걸리면 화면이 "5000+"처럼 표기할 수 있게 알린다.
+		"totalCapped": total >= historyCountCap,
+	})
 }

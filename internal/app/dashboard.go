@@ -30,31 +30,48 @@ type dashboardIssue struct {
 	Action           string     `json:"action"`
 }
 
-// actionCountQueries는 관리자가 처리해야 할 건수만 센다. 상단 배지가 화면을
-// 옮길 때마다 대시보드 전체(13개 쿼리)를 부르던 것을 이 네 개로 줄인다.
-var actionCountQueries = map[string]string{
-	"unassignedEmployees": `SELECT count(*) FROM employees e WHERE e.status='active' AND NOT EXISTS(SELECT 1 FROM seat_assignments a WHERE a.employee_id=e.id AND a.ended_at IS NULL)`,
-	"retiredAssignments":  `SELECT count(*) FROM seat_assignments a JOIN employees e ON e.id=a.employee_id WHERE a.ended_at IS NULL AND e.status='retired'`,
-	"organizationMismatch": `SELECT count(*) FROM seat_assignments a JOIN employees e ON e.id=a.employee_id JOIN seats s ON s.id=a.seat_id
-			WHERE a.ended_at IS NULL AND s.organization_id IS NOT NULL AND e.organization_id IS DISTINCT FROM s.organization_id`,
-	"lowConfidenceSeats": `SELECT count(*) FROM seats s JOIN floor_maps m ON m.id=s.floor_map_id WHERE m.is_active AND s.confidence IS NOT NULL AND s.confidence < 0.95`,
+// actionCountKeys는 관리자가 처리해야 할 항목이다. 대시보드와 상단 배지가
+// 같은 정의를 쓰도록 키 목록만 두고 SQL 은 dashboardQueries 에서 가져온다.
+// 쿼리를 복사해 두면 한쪽만 고쳤을 때 배지와 카드가 조용히 어긋난다.
+var actionCountKeys = []string{
+	"unassignedEmployees",
+	"retiredAssignments",
+	"organizationMismatch",
+	"lowConfidenceSeats",
 }
 
-// countAll은 이름이 붙은 집계 쿼리들을 동시에 실행한다. 순차로 돌리면 쿼리
-// 수만큼 왕복 지연이 쌓인다.
+func actionRequiredTotal(counts map[string]int) int {
+	total := 0
+	for _, key := range actionCountKeys {
+		total += counts[key]
+	}
+	return total
+}
+
+// countAll은 집계 쿼리들을 제한된 동시성으로 실행한다. 무제한으로 띄우면
+// 대시보드 한 번에 풀의 연결을 모두 잡아, 관련 없는 요청까지 그 뒤에 줄 선다.
+// pgxpool 기본 MaxConns 는 max(4, NumCPU) 라 여유를 남겨 둔다.
+const countConcurrency = 4
+
 func (s *Server) countAll(ctx context.Context, queries map[string]string) map[string]int {
 	type result struct {
 		key   string
 		count int
 	}
 	channel := make(chan result, len(queries))
+	slots := make(chan struct{}, countConcurrency)
 	var group sync.WaitGroup
 	for key, query := range queries {
 		group.Add(1)
 		go func(key, query string) {
 			defer group.Done()
+			slots <- struct{}{}
+			defer func() { <-slots }()
 			var count int
-			_ = s.db.QueryRow(ctx, query).Scan(&count)
+			if err := s.db.QueryRow(ctx, query).Scan(&count); err != nil {
+				s.logger.Error("집계 쿼리 실패", "key", key, "error", err)
+				return
+			}
 			channel <- result{key, count}
 		}(key, query)
 	}
@@ -67,35 +84,39 @@ func (s *Server) countAll(ctx context.Context, queries map[string]string) map[st
 	return counts
 }
 
-// actionCount는 상단 배지 전용의 가벼운 집계다.
+// actionCount는 상단 배지 전용의 가벼운 집계다. 화면을 옮길 때마다 대시보드
+// 전체(13개 쿼리)를 부르지 않도록 필요한 항목만 센다.
 func (s *Server) actionCount(w http.ResponseWriter, r *http.Request) {
-	counts := s.countAll(r.Context(), actionCountQueries)
-	total := 0
-	for _, count := range counts {
-		total += count
+	subset := map[string]string{}
+	for _, key := range actionCountKeys {
+		subset[key] = dashboardQueries[key]
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"actionRequired": total, "counts": counts})
+	counts := s.countAll(r.Context(), subset)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"actionRequired": actionRequiredTotal(counts), "counts": counts,
+	})
+}
+
+var dashboardQueries = map[string]string{
+	"unassignedEmployees": `SELECT count(*) FROM employees e WHERE e.status='active' AND NOT EXISTS(SELECT 1 FROM seat_assignments a WHERE a.employee_id=e.id AND a.ended_at IS NULL)`,
+	"unusedSeats":         `SELECT count(*) FROM seats s JOIN floor_maps m ON m.id=s.floor_map_id WHERE m.is_active AND s.status='available' AND NOT EXISTS(SELECT 1 FROM seat_assignments a WHERE a.seat_id=s.id AND a.ended_at IS NULL)`,
+	"retiredAssignments":  `SELECT count(*) FROM seat_assignments a JOIN employees e ON e.id=a.employee_id WHERE a.ended_at IS NULL AND e.status='retired'`,
+	"organizationMismatch": `SELECT count(*) FROM seat_assignments a JOIN employees e ON e.id=a.employee_id JOIN seats s ON s.id=a.seat_id
+			WHERE a.ended_at IS NULL AND s.organization_id IS NOT NULL AND e.organization_id IS DISTINCT FROM s.organization_id`,
+	"lowConfidenceSeats": `SELECT count(*) FROM seats s JOIN floor_maps m ON m.id=s.floor_map_id WHERE m.is_active AND s.confidence IS NOT NULL AND s.confidence < 0.95`,
+	"totalEmployees":     `SELECT count(*) FROM employees WHERE status='active'`,
+	"assignedEmployees":  `SELECT count(*) FROM employees e WHERE e.status='active' AND EXISTS(SELECT 1 FROM seat_assignments a WHERE a.employee_id=e.id AND a.ended_at IS NULL)`,
+	"totalSeats":         `SELECT count(*) FROM seats s JOIN floor_maps m ON m.id=s.floor_map_id WHERE m.is_active AND s.type IN ('fixed','shared')`,
+	"assignedSeats":      `SELECT count(*) FROM seats s JOIN floor_maps m ON m.id=s.floor_map_id WHERE m.is_active AND EXISTS(SELECT 1 FROM seat_assignments a WHERE a.seat_id=s.id AND a.ended_at IS NULL)`,
+	"mapsInReview":       `SELECT count(*) FROM floor_maps WHERE status='review'`,
+	"buildings":          `SELECT count(*) FROM buildings`,
+	"floors":             `SELECT count(*) FROM floors`,
+	"activeMaps":         `SELECT count(*) FROM floor_maps WHERE is_active`,
 }
 
 func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
-	queries := map[string]string{
-		"unassignedEmployees": `SELECT count(*) FROM employees e WHERE e.status='active' AND NOT EXISTS(SELECT 1 FROM seat_assignments a WHERE a.employee_id=e.id AND a.ended_at IS NULL)`,
-		"unusedSeats":         `SELECT count(*) FROM seats s JOIN floor_maps m ON m.id=s.floor_map_id WHERE m.is_active AND s.status='available' AND NOT EXISTS(SELECT 1 FROM seat_assignments a WHERE a.seat_id=s.id AND a.ended_at IS NULL)`,
-		"retiredAssignments":  `SELECT count(*) FROM seat_assignments a JOIN employees e ON e.id=a.employee_id WHERE a.ended_at IS NULL AND e.status='retired'`,
-		"organizationMismatch": `SELECT count(*) FROM seat_assignments a JOIN employees e ON e.id=a.employee_id JOIN seats s ON s.id=a.seat_id
-			WHERE a.ended_at IS NULL AND s.organization_id IS NOT NULL AND e.organization_id IS DISTINCT FROM s.organization_id`,
-		"lowConfidenceSeats": `SELECT count(*) FROM seats s JOIN floor_maps m ON m.id=s.floor_map_id WHERE m.is_active AND s.confidence IS NOT NULL AND s.confidence < 0.95`,
-		"totalEmployees":     `SELECT count(*) FROM employees WHERE status='active'`,
-		"assignedEmployees":  `SELECT count(*) FROM employees e WHERE e.status='active' AND EXISTS(SELECT 1 FROM seat_assignments a WHERE a.employee_id=e.id AND a.ended_at IS NULL)`,
-		"totalSeats":         `SELECT count(*) FROM seats s JOIN floor_maps m ON m.id=s.floor_map_id WHERE m.is_active AND s.type IN ('fixed','shared')`,
-		"assignedSeats":      `SELECT count(*) FROM seats s JOIN floor_maps m ON m.id=s.floor_map_id WHERE m.is_active AND EXISTS(SELECT 1 FROM seat_assignments a WHERE a.seat_id=s.id AND a.ended_at IS NULL)`,
-		"mapsInReview":       `SELECT count(*) FROM floor_maps WHERE status='review'`,
-		"buildings":          `SELECT count(*) FROM buildings`,
-		"floors":             `SELECT count(*) FROM floors`,
-		"activeMaps":         `SELECT count(*) FROM floor_maps WHERE is_active`,
-	}
-	counts := s.countAll(r.Context(), queries)
-	counts["actionRequired"] = counts["unassignedEmployees"] + counts["retiredAssignments"] + counts["organizationMismatch"] + counts["lowConfidenceSeats"]
+	counts := s.countAll(r.Context(), dashboardQueries)
+	counts["actionRequired"] = actionRequiredTotal(counts)
 
 	oidcEnabled, _ := s.getSetting(r.Context(), "oidc.enabled")
 	hrEnabled, _ := s.getSetting(r.Context(), "hr.sync_enabled")
