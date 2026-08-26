@@ -16,7 +16,8 @@ import { Logo } from "../components/Logo";
 import { useAuth } from "../auth";
 
 export function LoginPage() {
-  const { user, config, version, login } = useAuth(),
+  const { user, config, version, login, sessionEnded, clearSessionEnded } =
+      useAuth(),
     navigate = useNavigate(),
     location = useLocation();
   const [username, setUsername] = useState(""),
@@ -136,6 +137,16 @@ export function LoginPage() {
             {config?.companyName ? `${config.companyName} ` : ""}SeatOn에
             로그인하세요.
           </Typography>
+          {/* 세션이 끊겨 돌아온 경우와 로그인 실패를 구분해 알린다. */}
+          {sessionEnded && !error && (
+            <Alert
+              severity="warning"
+              sx={{ mb: 2 }}
+              onClose={clearSessionEnded}
+            >
+              {sessionEnded}
+            </Alert>
+          )}
           {(error || queryError) && (
             <Alert severity="error" sx={{ mb: 2 }}>
               {error || "SSO 인증을 완료하지 못했습니다."}
