@@ -532,6 +532,12 @@ function FloorDialog({
   const [buildingId, setBuildingId] = useState(""),
     [name, setName] = useState(""),
     [code, setCode] = useState("");
+  // 고를 것이 하나뿐이면 미리 골라 둔다. 사업장이 하나인 설치에서 목록을 펼쳐
+  // 유일한 항목을 고르게 하면, 저장 버튼이 왜 꺼져 있는지만 헷갈린다.
+  useEffect(() => {
+    if (open && !buildingId && buildings.length === 1)
+      setBuildingId(buildings[0].id);
+  }, [open, buildings, buildingId]);
   const save = async () => {
     await postJSON("/api/v1/floors", { buildingId, name, code });
     await done();
@@ -600,6 +606,9 @@ function UploadDialog({
     [version, setVersion] = useState("1"),
     [file, setFile] = useState<File | null>(null),
     [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (open && !floorId && floors.length === 1) setFloorId(floors[0].id);
+  }, [open, floors, floorId]);
   const save = async (e: FormEvent) => {
     e.preventDefault();
     if (!file) return;

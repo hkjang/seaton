@@ -23,8 +23,10 @@ test.describe("관리 화면", () => {
   test("도면 화면이 준비 단계와 도면 카드를 보여준다", async ({ page }) => {
     const problems = watchConsole(page);
     await page.goto("/admin/maps");
-    await expect(page.getByText("본사 · 3층")).toBeVisible();
-    await expect(page.getByText("게시 중")).toBeVisible();
+    // 도면 버전은 여러 개일 수 있다. 실제 설치에서도 버전이 쌓이므로 개수를
+    // 전제하지 않는다.
+    await expect(page.getByText("본사 · 3층").first()).toBeVisible();
+    await expect(page.getByText("게시 중").first()).toBeVisible();
     // 준비 단계는 끝난 것만 완료로 표시해야 한다. 처음 설치한 관리자가 아직
     // 하지 않은 단계까지 체크로 읽은 적이 있다.
     for (const step of ["1. 사업장", "3. 도면", "5. 게시"]) {
