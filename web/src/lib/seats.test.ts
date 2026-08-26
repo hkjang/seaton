@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { Seat } from "../types";
 import {
+  commonSeatPrefix,
   deriveGrid,
   matchesFilter,
   needsReviewSeat,
   seatColor,
   seatHighlighted,
+  seatLabelLayout,
   seatOrgId,
   seatUnavailable,
+  shortSeatNo,
+  zoomTier,
   zoneMismatched,
   type SeatFilter,
 } from "./seats";
@@ -167,5 +171,90 @@ describe("deriveGrid", () => {
         seat({ id: "b", x: 0.1005, y: 0.1, width: 0.001, height: 0.001 }),
       ]),
     ).toBeNull();
+  });
+});
+
+describe("commonSeatPrefix", () => {
+  it("구분자 단위로 공통 접두사를 찾는다", () => {
+    expect(commonSeatPrefix(["HQ-3F-001", "HQ-3F-002", "HQ-3F-010"])).toBe(
+      "HQ-3F-",
+    );
+  });
+
+  it("토큰 중간에서 자르지 않는다", () => {
+    // 공통 문자열은 "A-1"이지만 "A-"까지만 접두사로 인정해야 한다.
+    expect(commonSeatPrefix(["A-11", "A-12"])).toBe("A-");
+  });
+
+  it("공통 부분이 없으면 빈 문자열", () => {
+    expect(commonSeatPrefix(["A-01", "B-01"])).toBe("");
+  });
+
+  it("구분자가 없으면 떼지 않는다", () => {
+    expect(commonSeatPrefix(["1001", "1002"])).toBe("");
+  });
+
+  it("좌석이 하나뿐이면 떼지 않는다", () => {
+    expect(commonSeatPrefix(["HQ-3F-001"])).toBe("");
+  });
+
+  it("접두사를 떼면 빈 이름이 되는 좌석이 있으면 떼지 않는다", () => {
+    expect(commonSeatPrefix(["A-", "A-1"])).toBe("");
+  });
+});
+
+describe("shortSeatNo", () => {
+  it("접두사를 뗀다", () => {
+    expect(shortSeatNo("HQ-3F-001", "HQ-3F-")).toBe("001");
+  });
+
+  it("접두사가 없으면 원래 번호", () => {
+    expect(shortSeatNo("HQ-3F-001", "")).toBe("HQ-3F-001");
+    expect(shortSeatNo("B-01", "HQ-3F-")).toBe("B-01");
+  });
+});
+
+describe("zoomTier", () => {
+  it("확대하지 않았으면 1단계", () => {
+    expect(zoomTier(1)).toBe(1);
+    expect(zoomTier(0.4)).toBe(1);
+    expect(zoomTier(1.3)).toBe(1);
+  });
+
+  it("가장 가까운 2의 거듭제곱으로 뭉친다", () => {
+    expect(zoomTier(1.5)).toBe(2);
+    expect(zoomTier(3)).toBe(4);
+    expect(zoomTier(8.7)).toBe(8);
+  });
+
+  it("최대 8단계에서 멈춘다", () => {
+    expect(zoomTier(12)).toBe(8);
+  });
+});
+
+describe("seatLabelLayout", () => {
+  it("확대해도 글자가 좌석을 뒤덮지 않는다", () => {
+    const fit = seatLabelLayout("김개발", 40, 22, 1);
+    const zoomed = seatLabelLayout("김개발", 40, 22, 4);
+    // 화면상 크기(= fontSize × 배율)는 커지되 배율만큼 커지지는 않는다.
+    expect(zoomed.fontSize * 4).toBeGreaterThan(fit.fontSize);
+    expect(zoomed.fontSize * 4).toBeLessThan(fit.fontSize * 2.5);
+    // 좌석 대비로는 반드시 작아져야 글자가 좌석을 뒤덮지 않는다.
+    expect(zoomed.fontSize).toBeLessThan(fit.fontSize);
+  });
+
+  it("확대하면 잘렸던 글자가 더 보인다", () => {
+    const fit = seatLabelLayout("최고참프론트엔드팀", 40, 22, 1);
+    const zoomed = seatLabelLayout("최고참프론트엔드팀", 40, 22, 4);
+    expect(fit.text).toContain("…");
+    expect(zoomed.text).toBe("최고참프론트엔드팀");
+  });
+
+  it("너무 작은 좌석에는 라벨을 그리지 않는다", () => {
+    expect(seatLabelLayout("A", 8, 5, 1).show).toBe(false);
+  });
+
+  it("작은 좌석도 확대하면 라벨이 나타난다", () => {
+    expect(seatLabelLayout("A1", 12, 8, 4).show).toBe(true);
   });
 });
