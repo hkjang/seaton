@@ -33,13 +33,7 @@ test.describe("도면 업로드와 AI 분석", () => {
       .setInputFiles("e2e/fixtures/plan.png");
     await dialog.getByRole("button", { name: "업로드" }).click();
 
-    // 카드 안쪽 요소도 같은 글을 담으므로, 분석 단추를 가진 것 중 가장 깊은
-    // 것을 고른다.
-    const card = page
-      .locator("div")
-      .filter({ hasText: new RegExp(`Version ${version}\\b`) })
-      .filter({ has: page.getByRole("button", { name: "AI 분석" }) })
-      .last();
+    const card = page.locator(`[data-map-version="${version}"]`);
     await expect(card).toContainText("분석 전", { timeout: 30_000 });
 
     // 분석은 비동기 작업이다. 요청 즉시 끝나지 않으므로 화면이 진행 상태를
@@ -55,7 +49,7 @@ test.describe("도면 업로드와 AI 분석", () => {
       .getByRole("dialog")
       .getByRole("button", { name: "삭제" })
       .click();
-    await expect(page.getByText(`Version ${version}`)).toHaveCount(0);
+    await expect(card).toHaveCount(0);
     expect(problems()).toHaveLength(0);
   });
 });

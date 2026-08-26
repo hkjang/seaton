@@ -21,6 +21,7 @@ func (s *Server) openAPI(w http.ResponseWriter, _ *http.Request) {
 			"/floors":                         map[string]any{"get": operation("층 조회", true), "post": operation("층 등록", true)},
 			"/floor-maps":                     map[string]any{"get": operation("도면 버전 조회", true), "post": operation("도면 업로드", true)},
 			"/floor-maps/{mapID}":             map[string]any{"delete": operation("도면 버전 삭제 (게시 중이거나 이력이 있으면 409)", true)},
+			"/floor-maps/{mapID}/unpublish":   map[string]any{"post": operation("도면 게시 내리기", true)},
 			"/floor-maps/{mapID}/analyze":     map[string]any{"post": operation("좌석 후보 분석 시작 (202, engine=cv|vlm|hybrid)", true)},
 			"/analysis-jobs/{jobID}":          map[string]any{"get": operation("분석 잡 진행 상태와 결과 조회", true)},
 			"/settings/ai/vlm/test":           map[string]any{"post": operation("사내 VLM 엔드포인트 연결 시험", true)},

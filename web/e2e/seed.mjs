@@ -8,6 +8,9 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
+/** 검증이 기준으로 삼는 도면 버전. */
+const BASE_VERSION = "v1";
+
 const ORGS = [
   { externalId: "DEV", name: "개발팀", color: "#3478C8" },
   { externalId: "SALES", name: "영업팀", color: "#E7692F" },
@@ -61,10 +64,39 @@ const settle = async (call, jobId) => {
   throw new Error("분석이 끝나지 않았습니다");
 };
 
+/**
+ * 이미 시드가 있는 환경을 검증 시작 상태로 되돌린다.
+ *
+ * 도면 게시를 바꾸는 검증이 도중에 끊기면 게시된 도면이 하나도 없는 채로 남고,
+ * 그 뒤 모든 검증이 "좌석맵에 아무것도 없다"는 이유로 무너진다. 실행마다 기준
+ * 버전을 다시 게시하고 남은 확인용 버전을 치운다.
+ */
+const repair = async (call, maps) => {
+  const base = maps.find((map) => map.version === BASE_VERSION);
+  if (!base) return { seeded: false, repaired: false };
+  let repaired = false;
+  for (const map of maps) {
+    if (map.version === BASE_VERSION || !map.id) continue;
+    try {
+      if (map.active)
+        await call("POST", `/api/v1/floor-maps/${map.id}/unpublish`);
+      await call("DELETE", `/api/v1/floor-maps/${map.id}`);
+      repaired = true;
+    } catch {
+      // 배정이나 이력이 걸린 버전은 그대로 둔다.
+    }
+  }
+  if (!base.active) {
+    await call("POST", `/api/v1/floor-maps/${base.id}/publish`);
+    repaired = true;
+  }
+  return { seeded: false, repaired };
+};
+
 export const seed = async ({ baseURL, username, password }) => {
   const call = await client(baseURL, username, password);
   const existing = await call("GET", "/api/v1/floor-maps");
-  if (existing.items?.length) return { seeded: false };
+  if (existing.items?.length) return repair(call, existing.items);
 
   const building = await call("POST", "/api/v1/buildings", {
     json: { name: "본사", code: "HQ" },
@@ -75,7 +107,7 @@ export const seed = async ({ baseURL, username, password }) => {
 
   const form = new FormData();
   form.set("floorId", floor.id);
-  form.set("version", "v1");
+  form.set("version", BASE_VERSION);
   const plan = await readFile(
     fileURLToPath(new URL("./fixtures/plan.png", import.meta.url)),
   );

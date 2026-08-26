@@ -27,6 +27,7 @@ OpenAPI 3.1 문서는 실행 중인 SeatOn의 `/api/v1/openapi.json`에서 확�
 - `PATCH /api/v1/seats/bulk` 다중 좌석 위치·회전 일괄 저장
 - `POST /api/v1/seat-assignments` 좌석 배정
 - `POST /api/v1/seat-assignments/bulk` CSV/XLSX 일괄 배정
+- `POST /api/v1/floor-maps/{id}/unpublish` 게시 내리기. 게시 중이 아니면 `409 map_not_published`
 - `DELETE /api/v1/floor-maps/{id}` 도면 버전 삭제. 게시 중이면 `409 map_published`, 배정·변경 이력이 걸린 좌석이 있으면 `409 map_in_use`
 - `POST /api/v1/floor-maps/{id}/analyze?engine=cv|vlm|hybrid` 도면 분석 시작, `202`와 함께 `jobId` 반환. `engine`을 생략하면 `ai.engine` 설정값을 사용
 - `GET /api/v1/analysis-jobs/{jobId}` 분석 진행 상태, 결과 건수, 경고 목록 조회
