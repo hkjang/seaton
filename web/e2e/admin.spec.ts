@@ -38,8 +38,14 @@ test.describe("관리 화면", () => {
       // 이미 없다면 날짜 해석이 아니라 변경 자체가 만들어지지 않은 것이다.
       await expect(page.getByText(stampedReason)).toBeVisible();
 
-      const day = (date: Date) =>
-        `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+      // 날짜는 반드시 브라우저 안에서 계산한다. 검증 프로세스(Node)와 브라우저의
+      // 시간대가 다르면, 화면이 해석하는 "오늘"과 다른 날짜를 넣게 된다. CI에서
+      // 실제로 하루 어긋나 오늘 범위가 비었다.
+      const day = (offsetDays: number) =>
+        page.evaluate((offset) => {
+          const at = new Date(Date.now() + offset * 86400000);
+          return `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, "0")}-${String(at.getDate()).padStart(2, "0")}`;
+        }, offsetDays);
       const setRange = async (from: string, to: string) => {
         const start = page.getByLabel("시작일");
         const end = page.getByLabel("종료일");
@@ -52,13 +58,13 @@ test.describe("관리 화면", () => {
         await page.getByRole("button", { name: "조회" }).click();
       };
 
-      const today = new Date();
-      await setRange(day(today), day(today));
+      const today = await day(0);
+      await setRange(today, today);
       await expect(page.getByText(stampedReason)).toBeVisible();
 
       // 내일부터로 좁히면 방금 한 변경은 빠져야 한다.
-      const tomorrow = new Date(today.getTime() + 86400000);
-      await setRange(day(tomorrow), day(tomorrow));
+      const tomorrow = await day(1);
+      await setRange(tomorrow, tomorrow);
       await expect(page.getByText(stampedReason)).toHaveCount(0);
     });
   });
