@@ -33,8 +33,9 @@ OpenAPI 3.1 문서는 실행 중인 SeatOn의 `/api/v1/openapi.json`에서 확�
 - `GET /api/v1/floor-maps/{id}/preview` 좌석 오버레이 기준 래스터 이미지, PDF는 첫 페이지를 PNG로 변환해 제공
 - `PUT /api/v1/floor-maps/{id}/grid` 도면 좌석 격자 보정값 저장, 빈 본문 `{}`은 해제
 - `POST /api/v1/floor-maps/{id}/seats/align` 좌석을 도면 격자에 정렬, `seatIds` 생략 시 도면 전체
-- `GET /api/v1/seat-history` 변경 이력
+- `GET /api/v1/seat-history?q=&source=&from=&to=&limit=` 변경 이력 검색. `from`/`to`는 RFC3339 시각이며 `to`는 열린 구간
 - `GET /api/v1/dashboard` 운영 준비도와 처리 필요 건수
+- `GET /api/v1/dashboard/action-count` 처리 필요 건수만 집계, 상단 배지처럼 자주 부르는 곳에 사용
 - `GET /api/v1/dashboard/issues?kind=` 처리 필요 상세 작업 큐
 - `POST /api/v1/dashboard/issues/{kind}/{id}/resolve` 퇴직자 좌석 해제, AI 후보 승인, 조직 영역 보정
 

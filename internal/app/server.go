@@ -72,6 +72,7 @@ func (s *Server) Routes() http.Handler {
 			r.Group(func(r chi.Router) {
 				r.Use(s.requireSeatManager)
 				r.Get("/dashboard", s.dashboard)
+				r.Get("/dashboard/action-count", s.actionCount)
 				r.Get("/dashboard/issues", s.dashboardIssues)
 				r.Post("/dashboard/issues/{kind}/{issueID}/resolve", s.resolveDashboardIssue)
 				r.Post("/dashboard/issues/retired-assignment/resolve-all", s.resolveAllRetiredAssignments)
