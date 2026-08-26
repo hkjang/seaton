@@ -8,6 +8,7 @@ import {
   type DragEvent,
   type FormEvent,
   type MouseEvent as ReactMouseEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import {
@@ -76,9 +77,12 @@ import {
   SEAT_FILTERS,
   seatColor,
   type SeatFilter,
+  nextSeatInDirection,
+  type SeatDirection,
   seatHighlighted,
   seatLabelLayout,
   seatOrgId,
+  seatsInReadingOrder,
   shortSeatNo,
   zoneMismatched,
   zoomTier,
@@ -141,6 +145,14 @@ type SeatShapeProps = {
   numberPrefix: string;
   /** 확대 단계. 라벨을 이 값으로 나눠 화면상 크기를 일정하게 지킨다. */
   tier: number;
+  /**
+   * 탭 순서에 들어가는 좌석인지. 좌석 수백 개를 모두 탭으로 훑게 하면 도면을
+   * 지나 다음 조작으로 가는 데만 수백 번을 눌러야 하므로, 한 좌석만 탭으로
+   * 들어오고 그 안에서는 방향키로 옮겨 다닌다.
+   */
+  focusable: boolean;
+  onKeyDown: (event: ReactKeyboardEvent<SVGGElement>, seat: Seat) => void;
+  onFocus: (seat: Seat) => void;
   active: boolean;
   focused: boolean;
   dimmed: boolean;
@@ -156,12 +168,23 @@ type SeatShapeProps = {
   onDropEmployee: (event: DragEvent, seat: Seat) => void;
 };
 
+/** 화면 낭독기와 툴팁이 함께 쓰는 좌석 설명. */
+const seatSpeech = (seat: Seat, mismatch: boolean, needsReview: boolean) =>
+  `${seat.seatNo}${seat.employeeName ? ` · ${seat.employeeName}` : " · 빈 좌석"}${
+    seat.employeeOrganizationName ? ` · ${seat.employeeOrganizationName}` : ""
+  }${needsReview ? " · 검토 필요" : ""}${
+    mismatch ? ` · 구역 불일치(지정 ${seat.organizationName})` : ""
+  }`;
+
 const SeatShape = memo(function SeatShape({
   seat,
   canvasWidth,
   canvasHeight,
   numberPrefix,
   tier,
+  focusable,
+  onKeyDown,
+  onFocus,
   active,
   focused,
   dimmed,
@@ -190,6 +213,12 @@ const SeatShape = memo(function SeatShape({
     <g
       opacity={dimmed ? 0.14 : 1}
       transform={`rotate(${seat.rotation} ${left + width / 2} ${top + height / 2})`}
+      role="button"
+      data-seat-id={seat.id}
+      tabIndex={focusable ? 0 : -1}
+      aria-label={seatSpeech(seat, mismatch, needsReview)}
+      onKeyDown={(event) => onKeyDown(event, seat)}
+      onFocus={() => onFocus(seat)}
       onPointerDown={(event) => onPointerDown(event, seat)}
       onClick={() => onSelect(seat)}
       onDoubleClick={(event) => {
@@ -202,6 +231,8 @@ const SeatShape = memo(function SeatShape({
         cursor: editMode ? "move" : "pointer",
         // 조회 모드에서도 좌석 위에서 끌면 화면이 움직여야 하므로 기본 제스처를 끈다.
         touchAction: "none",
+        // 초점 테두리는 좌석 밖으로 밀어 좌석 색과 섞이지 않게 한다.
+        outlineOffset: 3,
       }}
     >
       {active && (
@@ -263,9 +294,7 @@ const SeatShape = memo(function SeatShape({
           {text}
         </text>
       )}
-      <title>
-        {`${seat.seatNo}${seat.employeeName ? ` · ${seat.employeeName}` : " · 빈 좌석"}${seat.employeeOrganizationName ? ` · ${seat.employeeOrganizationName}` : ""}${needsReview ? " · 검토 필요" : ""}${mismatch ? ` · 구역 불일치(지정 ${seat.organizationName})` : ""}`}
-      </title>
+      <title>{seatSpeech(seat, mismatch, needsReview)}</title>
     </g>
   );
 });
@@ -280,6 +309,9 @@ const keyboardTargetsMap = (event: KeyboardEvent) => {
   // 열려 있는 모달·메뉴 안이면 그쪽이 우선이다.
   if (target.closest('[role="dialog"], [role="listbox"], [role="menu"]'))
     return false;
+  // 좌석에 초점이 있으면 방향키는 좌석 사이를 옮기는 조작이다. 여기서 걸러내지
+  // 않으면 좌석 초점이 옮겨 가는 동시에 화면까지 밀려 두 번 움직인다.
+  if (target.closest("[data-seat-id]")) return false;
   if (document.querySelector('[role="dialog"]')) return false;
   return true;
 };
@@ -902,11 +934,30 @@ export function SeatMapPage() {
   };
   // memo된 좌석이 매 렌더 무효화되지 않도록 콜백을 고정한다. 바뀌는 값은
   // ref로 읽어 콜백 신원(identity)을 유지한다.
+  // 초점이 옮겨 간 좌석이 화면 밖이면 그 좌석이 보이도록 화면을 옮긴다.
+  // 이미 보이는 좌석까지 매번 가운데로 끌어오면 방향키를 누를 때마다 도면이
+  // 요동쳐 어디를 보고 있는지 잃는다.
+  const revealSeat = (seat: Seat) => {
+    if (!viewport.width || !viewport.height) return;
+    const rect = viewRectFor(view, viewport, canvas);
+    const left = seat.x * canvas.width,
+      top = seat.y * canvas.height,
+      right = left + seat.width * canvas.width,
+      bottom = top + seat.height * canvas.height;
+    const inside =
+      left >= rect.x &&
+      right <= rect.x + rect.width &&
+      top >= rect.y &&
+      bottom <= rect.y + rect.height;
+    if (inside) return;
+    moveCenter(seat.x + seat.width / 2, seat.y + seat.height / 2);
+  };
   const seatActionsRef = useRef({
     beginSeatMove,
     drop,
     setEditor,
     setSelected,
+    revealSeat,
     editMode,
     manager,
   });
@@ -915,6 +966,7 @@ export function SeatMapPage() {
     drop,
     setEditor,
     setSelected,
+    revealSeat,
     editMode,
     manager,
   };
@@ -937,6 +989,60 @@ export function SeatMapPage() {
       void seatActionsRef.current.drop(event, seat),
     [],
   );
+  // 탭으로 들어오는 좌석 하나. 그 안에서는 방향키로 옮겨 다닌다.
+  const [rovingId, setRovingId] = useState("");
+  // 방향키로 옮길 때는 초점을 실제로 그 좌석에 준다. 초점이 따라가야 화면
+  // 낭독기가 어디로 갔는지 읽어 준다.
+  const focusSeatNode = (seatId: string) =>
+    stageRef.current
+      ?.querySelector<SVGGElement>(`[data-seat-id="${seatId}"]`)
+      ?.focus();
+  const orderedSeats = useMemo(() => seatsInReadingOrder(seats), [seats]);
+  const rovingSeatId =
+    orderedSeats.find((seat) => seat.id === rovingId)?.id ??
+    orderedSeats[0]?.id ??
+    "";
+  const seatKeyDown = useCallback(
+    (event: ReactKeyboardEvent<SVGGElement>, seat: Seat) => {
+      const move: Record<string, SeatDirection> = {
+        ArrowLeft: "left",
+        ArrowRight: "right",
+        ArrowUp: "up",
+        ArrowDown: "down",
+      };
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        if (!seatActionsRef.current.editMode)
+          seatActionsRef.current.setSelected(seat);
+        return;
+      }
+      // 편집 모드의 방향키는 좌석을 옮기는 조작이므로 그쪽에 넘긴다.
+      if (editMode || !move[event.key]) {
+        if (event.key === "Home" || event.key === "End") {
+          const target =
+            event.key === "Home"
+              ? orderedSeats[0]
+              : orderedSeats[orderedSeats.length - 1];
+          if (target) {
+            event.preventDefault();
+            focusSeatNode(target.id);
+          }
+        }
+        return;
+      }
+      const next = nextSeatInDirection(orderedSeats, seat.id, move[event.key]);
+      if (!next) return;
+      event.preventDefault();
+      event.stopPropagation();
+      focusSeatNode(next.id);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [orderedSeats, editMode],
+  );
+  const seatFocused = useCallback((seat: Seat) => {
+    setRovingId(seat.id);
+    seatActionsRef.current.revealSeat(seat);
+  }, []);
   const seatNumberPrefix = useMemo(
     () => commonSeatPrefix(seats.map((seat) => seat.seatNo)),
     [seats],
@@ -957,6 +1063,9 @@ export function SeatMapPage() {
           canvasHeight={canvas.height}
           numberPrefix={seatNumberPrefix}
           tier={labelTier}
+          focusable={seat.id === rovingSeatId}
+          onKeyDown={seatKeyDown}
+          onFocus={seatFocused}
           active={selectedIds.has(seat.id) || selected?.id === seat.id}
           focused={selected?.id === seat.id}
           dimmed={!seatHighlighted(seat, filters, activeOrg)}
@@ -978,6 +1087,9 @@ export function SeatMapPage() {
       canvas,
       seatNumberPrefix,
       labelTier,
+      rovingSeatId,
+      seatKeyDown,
+      seatFocused,
       selectedIds,
       selected?.id,
       filters,
@@ -1878,6 +1990,15 @@ export function SeatMapPage() {
                         />
                       </pattern>
                     </defs>
+                    {/* 초점 표시는 좌석마다 인라인으로 두면 좌석 수만큼 늘어난다.
+                        도면 안에 규칙 하나로 둔다. */}
+                    <style>{`
+                      [data-seat-id]:focus { outline: none; }
+                      [data-seat-id]:focus-visible {
+                        outline: 3px solid #0B5FFF;
+                        outline-offset: 3px;
+                      }
+                    `}</style>
                     <image
                       href={currentMap.previewUrl}
                       x="0"

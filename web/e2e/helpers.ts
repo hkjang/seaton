@@ -1,5 +1,8 @@
 import { expect, type Page } from "@playwright/test";
 
+/** 시드가 만드는 층. 검증은 이 층의 좌석을 기준으로 한다. */
+export const SEED_FLOOR = "3층";
+
 const USERNAME = process.env.E2E_USERNAME ?? "admin";
 const PASSWORD = process.env.E2E_PASSWORD ?? "e2e-verify-pass-123";
 
@@ -23,11 +26,15 @@ export const seatLabels = async (page: Page) =>
  */
 export const fetchSeats = async (page: Page) => {
   const maps = await (await page.request.get("/api/v1/floor-maps")).json();
-  // 도면 버전은 여러 개일 수 있다. 좌석맵이 보여주는 것은 게시된 버전이므로
-  // 그 버전의 좌석을 읽어야 화면에서 본 것과 같은 좌석을 다룬다.
+  // 도면 버전은 여러 개이고 층도 여러 개일 수 있다. 검증이 다루는 것은 시드가
+  // 만든 층의 게시된 버전이므로, 그 층을 이름으로 집어 고른다. 그러지 않으면
+  // 나중에 추가된 다른 층의 좌석을 읽어 "김개발이 없다"는 식으로 깨진다.
+  type MapItem = { id: string; active?: boolean; floorName?: string };
+  const items = maps.items as MapItem[];
   const map =
-    maps.items.find((item: { active?: boolean }) => item.active) ??
-    maps.items[0];
+    items.find((item) => item.active && item.floorName === SEED_FLOOR) ??
+    items.find((item) => item.active) ??
+    items[0];
   const mapId = map.id;
   const seats = await (
     await page.request.get(`/api/v1/seats?floorMapId=${mapId}`)

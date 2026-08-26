@@ -70,6 +70,42 @@ test.describe("좌석맵", () => {
     expect(canvas.width).toBeGreaterThan(300);
   });
 
+  test("화면을 옮겨도 좌석을 다시 그리지 않는다", async ({ page }) => {
+    // 화면 이동과 확대는 viewBox만 바꾸고 좌석 좌표는 건드리지 않는다. 좌석을
+    // 옮기는 방식으로 되돌리면 좌석 수백 개를 매 프레임 다시 그려 큰 도면에서
+    // 화면이 끊긴다. 500석 도면에서도 60fps가 유지되는 근거가 이것이다.
+    const seatCoords = () =>
+      page.evaluate(() =>
+        Array.from(
+          document.querySelectorAll(
+            "svg[aria-label*='좌석 배치도'] [data-seat-id] rect",
+          ),
+        )
+          .slice(0, 10)
+          .map((node) => `${node.getAttribute("x")},${node.getAttribute("y")}`)
+          .join(" "),
+      );
+    // 전체 보기에서는 도면이 다 보여 화면이 움직이지 않는다. 먼저 확대한다.
+    const box = (await mapCanvas(page).boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.wheel(0, -400);
+    await expect(page.getByText(/^\d+%$/)).not.toHaveText("100%");
+
+    const before = await seatCoords();
+    const viewBox = await mapCanvas(page).getAttribute("viewBox");
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    for (let i = 1; i <= 10; i++)
+      await page.mouse.move(
+        box.x + box.width / 2 - i * 4,
+        box.y + box.height / 2 - i * 3,
+      );
+    await page.mouse.up();
+
+    expect(await mapCanvas(page).getAttribute("viewBox")).not.toBe(viewBox);
+    expect(await seatCoords()).toBe(before);
+  });
+
   test("확대하면 미니맵이 나타난다", async ({ page }) => {
     const minimap = page.getByLabel("도면 전체 미니맵");
     await expect(minimap).toBeHidden();

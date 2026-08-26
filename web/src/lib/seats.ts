@@ -181,3 +181,56 @@ export const seatLabelLayout = (
       : label;
   return { show, fontSize, text };
 };
+
+export type SeatDirection = "left" | "right" | "up" | "down";
+
+/** 좌석 가운데 점. 방향 이동은 이 점 사이의 거리로 판단한다. */
+const center = (seat: Seat) => ({
+  x: seat.x + seat.width / 2,
+  y: seat.y + seat.height / 2,
+});
+
+/**
+ * 방향키로 옮겨 갈 다음 좌석.
+ *
+ * 도면 위 좌석은 표가 아니라 흩어진 사각형이라 "다음 칸"이 정해져 있지 않다.
+ * 그 방향에 있는 좌석 중, 같은 줄에서 벗어난 정도에 벌점을 주고 가장 가까운
+ * 것을 고른다. 줄이 살짝 어긋난 도면에서도 옆자리로 이어지게 하기 위해서다.
+ */
+export const nextSeatInDirection = (
+  seats: Seat[],
+  fromId: string,
+  direction: SeatDirection,
+): Seat | null => {
+  const current = seats.find((seat) => seat.id === fromId);
+  if (!current) return seats[0] ?? null;
+  const from = center(current);
+  const horizontal = direction === "left" || direction === "right";
+  const sign = direction === "left" || direction === "up" ? -1 : 1;
+  let best: Seat | null = null;
+  let bestScore = Infinity;
+  for (const seat of seats) {
+    if (seat.id === fromId) continue;
+    const at = center(seat);
+    const along = (horizontal ? at.x - from.x : at.y - from.y) * sign;
+    if (along <= 0) continue;
+    const across = Math.abs(horizontal ? at.y - from.y : at.x - from.x);
+    // 진행 거리보다 줄을 벗어난 거리에 훨씬 큰 벌점을 준다.
+    const score = along + across * 4;
+    if (score < bestScore) {
+      bestScore = score;
+      best = seat;
+    }
+  }
+  return best;
+};
+
+/** 읽기 순서(위에서 아래, 왼쪽에서 오른쪽)로 정렬한 좌석. */
+export const seatsInReadingOrder = (seats: Seat[]): Seat[] =>
+  [...seats].sort((a, b) => {
+    const ay = a.y + a.height / 2,
+      by = b.y + b.height / 2;
+    // 같은 줄로 볼 만큼 가까우면 가로 위치로 가른다.
+    if (Math.abs(ay - by) > Math.min(a.height, b.height) / 2) return ay - by;
+    return a.x - b.x;
+  });
