@@ -16,13 +16,22 @@ import { Logo } from "../components/Logo";
 import { useAuth } from "../auth";
 
 export function LoginPage() {
-  const { user, config, version, login, sessionEnded, clearSessionEnded } =
-      useAuth(),
+  const {
+      user,
+      config,
+      version,
+      login,
+      sessionEnded,
+      clearSessionEnded,
+      configError,
+      reload,
+    } = useAuth(),
     navigate = useNavigate(),
     location = useLocation();
   const [username, setUsername] = useState(""),
     [password, setPassword] = useState(""),
     [error, setError] = useState(""),
+    [retrying, setRetrying] = useState(false),
     [busy, setBusy] = useState(false);
   if (user) return <Navigate to="/" replace />;
   const submit = async (e: FormEvent) => {
@@ -209,11 +218,39 @@ export function LoginPage() {
               </Stack>
             </Box>
           )}
-          {!config?.localEnabled && !config?.oidcEnabled && (
-            <Alert severity="warning">
-              사용 가능한 로그인 방식이 없습니다. 부트스트랩 관리자 설정을
-              확인하세요.
+          {/* 서버에 닿지 못한 것과 로그인 방식이 없는 것은 다른 상황이다.
+              연결 문제를 설정 문제로 안내하면 고칠 수 없는 곳을 보게 된다. */}
+          {configError ? (
+            <Alert
+              severity="error"
+              action={
+                <Button
+                  color="inherit"
+                  size="small"
+                  disabled={retrying}
+                  onClick={async () => {
+                    setRetrying(true);
+                    try {
+                      await reload();
+                    } finally {
+                      setRetrying(false);
+                    }
+                  }}
+                >
+                  {retrying ? "확인 중…" : "다시 시도"}
+                </Button>
+              }
+            >
+              서버에 연결하지 못했습니다. 네트워크를 확인한 뒤 다시 시도하세요.
             </Alert>
+          ) : (
+            !config?.localEnabled &&
+            !config?.oidcEnabled && (
+              <Alert severity="warning">
+                사용 가능한 로그인 방식이 없습니다. 부트스트랩 관리자 설정을
+                확인하세요.
+              </Alert>
+            )
           )}
           <Typography
             variant="caption"

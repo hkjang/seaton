@@ -17,6 +17,12 @@ interface AuthState {
   loading: boolean;
   /** 세션이 끊겨 로그아웃된 이유. 로그인 화면에서 사용자에게 알린다. */
   sessionEnded: string;
+  /**
+   * 로그인 방식 설정을 서버에서 받아오지 못한 이유. 값이 있으면 설정이 잘못된
+   * 것이 아니라 서버에 닿지 못한 것이므로, 화면은 설정을 고치라고 하는 대신
+   * 다시 시도할 길을 줘야 한다.
+   */
+  configError: string;
   clearSessionEnded: () => void;
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -29,12 +35,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [config, setConfig] = useState<AuthConfig | null>(null),
     [version, setVersion] = useState<VersionInfo | null>(null),
     [sessionEnded, setSessionEnded] = useState(""),
+    [configError, setConfigError] = useState(""),
     [loading, setLoading] = useState(true);
   const reload = useCallback(async () => {
     try {
       const c = await api<AuthConfig>("/api/v1/auth/config");
       setConfig(c);
       setVersion(c.version);
+      setConfigError("");
       try {
         const me = await api<{
           user: User;
@@ -48,6 +56,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(null);
         setCSRF("");
       }
+    } catch (e) {
+      // 설정을 못 받아 온 것은 설정이 비어 있다는 뜻이 아니라 서버에 닿지
+      // 못했다는 뜻이다. 여기서 잡지 않으면 처리되지 않은 거부로 흘러가고,
+      // 로그인 화면은 로그인 방식이 없다고 잘못 안내한다.
+      setConfigError(
+        e instanceof Error ? e.message : "서버에 연결하지 못했습니다",
+      );
     } finally {
       setLoading(false);
     }
@@ -89,6 +104,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       version,
       loading,
       sessionEnded,
+      configError,
       clearSessionEnded,
       login,
       logout,
@@ -100,6 +116,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       version,
       loading,
       sessionEnded,
+      configError,
       clearSessionEnded,
       login,
       logout,
