@@ -43,6 +43,16 @@ type KeyItem = {
   revokedAt?: string;
   graceUntil?: string;
 };
+/** 키 한 줄의 상태. 폐기·유예·사용 중을 색과 글로 함께 구분한다. */
+const keyStatus = (
+  key: KeyItem,
+): { label: string; color: "default" | "success" | "warning" } => {
+  if (key.revokedAt && key.graceUntil && new Date(key.graceUntil) > new Date())
+    return { label: "회전 유예", color: "warning" };
+  if (key.revokedAt) return { label: "폐기됨", color: "default" };
+  return { label: "사용 중", color: "success" };
+};
+
 export function KeysPage() {
   const [items, setItems] = useState<KeyItem[]>([]),
     [createOpen, setCreateOpen] = useState(false),
@@ -91,10 +101,20 @@ export function KeysPage() {
       setError(e instanceof Error ? e.message : "키를 회전하지 못했습니다");
     }
   };
-  const revoke = async (id: string) => {
-    if (!confirm("이 키를 즉시 폐기할까요? 되돌릴 수 없습니다.")) return;
-    await api(`/api/v1/api-keys/${id}`, { method: "DELETE" });
-    await load();
+  // 폐기는 되돌릴 수 없고 그 키를 쓰던 연동이 즉시 끊긴다. 어떤 키를 지우는지
+  // 보여 주고 한 번 더 확인받는다. 브라우저 기본 confirm은 화면 양식과 다르고,
+  // 막혀 있는 환경에서는 눌러도 아무 일이 없는 것처럼 보인다.
+  const [revoking, setRevoking] = useState<KeyItem | null>(null);
+  const revoke = async () => {
+    if (!revoking) return;
+    try {
+      await api(`/api/v1/api-keys/${revoking.id}`, { method: "DELETE" });
+      setRevoking(null);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "키를 폐기하지 못했습니다");
+      setRevoking(null);
+    }
   };
   return (
     <Box sx={{ p: { xs: 2, md: 3 }, maxWidth: 1100, mx: "auto" }}>
@@ -144,6 +164,7 @@ export function KeysPage() {
             <TableHead>
               <TableRow>
                 <TableCell>이름 / 식별자</TableCell>
+                <TableCell>상태</TableCell>
                 <TableCell>범위</TableCell>
                 <TableCell>버전</TableCell>
                 <TableCell>마지막 사용</TableCell>
@@ -166,21 +187,23 @@ export function KeysPage() {
                     </Typography>
                   </TableCell>
                   <TableCell>
+                    {/* 흐리게만 표시하면 폐기된 키인지 알 수 없고 화면 낭독기에는
+                        아무것도 전해지지 않는다. */}
+                    <Chip
+                      size="small"
+                      label={keyStatus(k).label}
+                      color={keyStatus(k).color}
+                      variant={k.revokedAt ? "outlined" : "filled"}
+                    />
+                  </TableCell>
+                  <TableCell>
                     {k.scopes.map((s) => (
                       <Chip key={s} size="small" label={s} sx={{ mr: 0.5 }} />
                     ))}
                   </TableCell>
-                  <TableCell>
-                    v{k.version}
-                    {k.graceUntil && (
-                      <Chip
-                        size="small"
-                        color="warning"
-                        label="회전 유예"
-                        sx={{ ml: 1 }}
-                      />
-                    )}
-                  </TableCell>
+                  {/* 회전 유예는 상태 칸이 알린다. 두 곳에서 말하면 유예가
+                      끝난 키가 폐기됨과 유예 중으로 동시에 보인다. */}
+                  <TableCell>v{k.version}</TableCell>
                   <TableCell>
                     {k.lastUsedAt
                       ? new Date(k.lastUsedAt).toLocaleString("ko-KR")
@@ -192,18 +215,20 @@ export function KeysPage() {
                       : "제한 없음"}
                   </TableCell>
                   <TableCell align="right">
-                    <Tooltip title="회전">
+                    <Tooltip title="새 키를 만들고 이 키는 유예기간 뒤 만료합니다">
                       <IconButton
+                        aria-label="회전"
                         onClick={() => void rotate(k.id)}
                         disabled={Boolean(k.revokedAt)}
                       >
                         <AutorenewRounded />
                       </IconButton>
                     </Tooltip>
-                    <Tooltip title="폐기">
+                    <Tooltip title="이 키를 즉시 무효로 만듭니다">
                       <IconButton
+                        aria-label="폐기"
                         color="error"
-                        onClick={() => void revoke(k.id)}
+                        onClick={() => setRevoking(k)}
                         disabled={Boolean(k.revokedAt)}
                       >
                         <DeleteOutlineRounded />
@@ -299,6 +324,30 @@ export function KeysPage() {
           </Button>
           <Button variant="contained" onClick={() => setRevealed(null)}>
             보관 완료
+          </Button>
+        </DialogActions>
+      </Dialog>
+      <Dialog
+        open={Boolean(revoking)}
+        onClose={() => setRevoking(null)}
+        fullWidth
+        maxWidth="xs"
+      >
+        <DialogTitle>API 키 폐기</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">
+            <strong>{revoking?.name}</strong>({revoking?.prefix}…) 키를 즉시
+            무효로 만듭니다. 이 키를 쓰던 연동은 바로 끊기며 되돌릴 수 없습니다.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRevoking(null)}>취소</Button>
+          <Button
+            color="error"
+            variant="contained"
+            onClick={() => void revoke()}
+          >
+            폐기
           </Button>
         </DialogActions>
       </Dialog>
