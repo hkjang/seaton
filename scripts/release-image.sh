@@ -14,14 +14,16 @@ fi
 
 release_commit="$(git rev-parse --short=12 HEAD)"
 release_built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-artifact="SeatOn-v${release_version}-linux-amd64-image.tar.gz"
+# 이미지 태그는 서비스명:v버전, 배포 파일은 서비스명-v버전.tar.gz 로 맞춘다.
+image_tag="seaton:v${release_version}"
+artifact="SeatOn-v${release_version}.tar.gz"
 
 docker build \
   --platform linux/amd64 \
   --build-arg "VERSION=${release_version}" \
   --build-arg "COMMIT=${release_commit}" \
   --build-arg "BUILT_AT=${release_built_at}" \
-  -t "seaton:${release_version}" \
+  -t "$image_tag" \
   -t "seaton:latest" .
-docker save "seaton:${release_version}" | gzip -9 > "$artifact"
+docker save "$image_tag" | gzip -9 > "$artifact"
 echo "$artifact"
