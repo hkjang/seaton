@@ -42,12 +42,12 @@
 외부 또는 사내 PostgreSQL 14+ 데이터베이스를 준비한다. SeatOn이 시작할 때 스키마를 자동 생성한다.
 
 ```bash
-docker load < SeatOn-v1.4.0-linux-amd64-image.tar.gz
+docker load < SeatOn-v1.4.0.tar.gz
 
 export POSTGRES_DSN='postgres://seaton:password@postgres.intra:5432/seaton?sslmode=require'
 export BOOTSTRAP_ADMIN='admin'
 export BOOTSTRAP_ADMIN_PASSWORD='change-this-strong-password'
-export SEATON_IMAGE_TAG='1.4.0'
+export SEATON_IMAGE_TAG='v1.4.0'
 docker compose up -d
 ```
 
@@ -132,11 +132,13 @@ PDF는 `docs/fonts/NanumGothic.ttf` 를 임베드하므로 한글 폰트가 없�
 
 ## 릴리스
 
-`v1.4.0` 형태의 태그를 push하면 GitHub Actions가 `linux/amd64` 서비스 이미지를 빌드하고 `docker save` 결과만 `tar.gz`로 GitHub Release에 첨부한다. 런타임에는 레지스트리나 인터넷이 필요 없다.
+`v1.4.0` 형태의 태그를 push하면 GitHub Actions가 `linux/amd64` 서비스 이미지를 `seaton:v1.4.0` 으로 빌드하고 `docker save` 결과를 `SeatOn-v1.4.0.tar.gz` 로 GitHub Release에 첨부한다. 런타임에는 레지스트리나 인터넷이 필요 없다.
+
+이름 규칙은 이미지 `서비스명:v버전`, 배포 파일 `서비스명-v버전.tar.gz` 이다. 애플리케이션이 `/api/v1/version` 으로 알리는 버전 문자열은 `v` 없는 semver(`1.4.0`)를 그대로 쓴다.
 
 로컬 검증은 다음과 같다.
 
 ```bash
 ./scripts/release-image.sh 1.4.0
-gzip -t SeatOn-v1.4.0-linux-amd64-image.tar.gz
+gzip -t SeatOn-v1.4.0.tar.gz
 ```

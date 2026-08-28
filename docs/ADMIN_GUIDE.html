@@ -77,7 +77,8 @@ BOOTSTRAP_ADMIN_PASSWORD=SuperSecretAdminPassword123!</code></pre>
   -e BOOTSTRAP_ADMIN="admin" \
   -e BOOTSTRAP_ADMIN_PASSWORD="change-this-strong-password" \
   -v seaton-data:/var/lib/seaton \
-  seaton:v1.0.0</code></pre>
+  seaton:v1.4.0</code></pre>
+        <p>배포 파일과 이미지 이름은 <code>SeatOn-v1.4.0.tar.gz</code> → <code>docker load</code> → <code>seaton:v1.4.0</code> 으로 이어집니다. 이미지는 <code>서비스명:v버전</code>, 배포 파일은 <code>서비스명-v버전.tar.gz</code> 규칙을 따르며, <code>/api/v1/version</code> 이 알리는 버전 문자열은 <code>v</code> 없는 <code>1.4.0</code> 입니다.</p>
         <h3>2.1 마스터 키 보존 중요성 (<code>/var/lib/seaton/master.key</code>)</h3>
         <p><code>/var/lib/seaton/master.key</code> 파일은 DB에 저장된 Client Secret 및 API Token을 암호화(AES-256-GCM)하는 마스터 키입니다. 이 키를 분실할 경우 암호화된 시크릿 복호화가 불가능하므로 반드시 정기 백업 대상에 포함시켜야 합니다.</p>
         <hr>

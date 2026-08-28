@@ -35,8 +35,10 @@ docker run -d \
   -e BOOTSTRAP_ADMIN="admin" \
   -e BOOTSTRAP_ADMIN_PASSWORD="change-this-strong-password" \
   -v seaton-data:/var/lib/seaton \
-  seaton:v1.0.0
+  seaton:v1.4.0
 ```
+
+배포 파일과 이미지 이름은 `SeatOn-v1.4.0.tar.gz` → `docker load` → `seaton:v1.4.0` 으로 이어집니다. 이미지는 `서비스명:v버전`, 배포 파일은 `서비스명-v버전.tar.gz` 규칙을 따르며, `/api/v1/version` 이 알리는 버전 문자열은 `v` 없는 `1.4.0` 입니다.
 
 ### 2.1 마스터 키 보존 중요성 (`/var/lib/seaton/master.key`)
 `/var/lib/seaton/master.key` 파일은 DB에 저장된 Client Secret 및 API Token을 암호화(AES-256-GCM)하는 마스터 키입니다. 이 키를 분실할 경우 암호화된 시크릿 복호화가 불가능하므로 반드시 정기 백업 대상에 포함시켜야 합니다.
