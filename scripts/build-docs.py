@@ -23,6 +23,10 @@ from pathlib import Path
 DOCS = Path(__file__).resolve().parent.parent / "docs"
 FONT_DIR = DOCS / "fonts"
 
+# PDF 를 공용 도구(aidev/tools/guide/md2pdf.mjs)로 굽는 문서. 이 스크립트는 HTML 만 만든다.
+# 가이드 PDF 서식을 다른 프로젝트와 맞추기 위해서다. 여기서도 PDF 를 만들면 두 서식이 번갈아 덮어쓴다.
+SHARED_PDF = {"ADMIN_GUIDE", "USER_GUIDE"}
+
 # 생성 대상과 HTML <title>. Markdown 파일명을 기준으로 한다.
 TARGETS = {
     "ADMIN_GUIDE": "SeatOn 엔터프라이즈 관리자 가이드 (Admin Guide)",
@@ -37,12 +41,14 @@ TARGETS = {
 
 @dataclass
 class Block:
-    kind: str  # heading | paragraph | list | table | code | quote | rule
+    kind: str  # heading | paragraph | list | table | code | quote | rule | image
     level: int = 0
     text: str = ""
     items: list[str] = field(default_factory=list)
     ordered: bool = False
+    start: int = 1
     rows: list[list[str]] = field(default_factory=list)
+    src: str = ""
 
 
 @dataclass
@@ -53,6 +59,8 @@ class Document:
 
 
 META_LINE = re.compile(r"^-\s+\*\*(.+?)\*\*\s*:\s*(.*?)\s*$")
+# 화면 캡처 한 줄. alt 텍스트가 그림 설명이 된다.
+IMAGE_LINE = re.compile(r"^!\[([^\]]*)\]\(([^)\s]+)\)$")
 
 
 def parse_markdown(text: str) -> Document:
@@ -83,15 +91,17 @@ def parse_markdown(text: str) -> Document:
     paragraph: list[str] = []
     items: list[str] = []
     ordered = False
+    start = 1
     table: list[list[str]] = []
 
     def flush() -> None:
-        nonlocal paragraph, items, table
+        nonlocal paragraph, items, table, start
         if paragraph:
             blocks.append(Block("paragraph", text=" ".join(paragraph).strip()))
             paragraph = []
         if items:
-            blocks.append(Block("list", items=items, ordered=ordered))
+            blocks.append(Block("list", items=items, ordered=ordered, start=start))
+            start += len(items)
             items = []
         if table:
             blocks.append(Block("table", rows=table))
@@ -136,6 +146,13 @@ def parse_markdown(text: str) -> Document:
             index += 1
             continue
 
+        image = IMAGE_LINE.match(stripped)
+        if image:
+            flush()
+            blocks.append(Block("image", text=image.group(1), src=image.group(2)))
+            index += 1
+            continue
+
         if stripped.startswith("> "):
             flush()
             quote = [stripped[2:].strip()]
@@ -156,8 +173,12 @@ def parse_markdown(text: str) -> Document:
                 paragraph = []
             wanted_ordered = number is not None
             if items and wanted_ordered != ordered:
-                blocks.append(Block("list", items=items, ordered=ordered))
+                blocks.append(Block("list", items=items, ordered=ordered, start=start))
                 items = []
+            # 번호 목록 사이에 끼운 캡처는 목록을 끊지만 번호는 이어진다.
+            # 그 밖의 경우는 새 목록이므로 1부터 센다.
+            if not items and (not blocks or blocks[-1].kind != "image"):
+                start = 1
             ordered = wanted_ordered
             items.append((number or bullet).group(2).strip())
             index += 1
@@ -239,6 +260,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         tbody tr:nth-child(even) {{ background: #fafafa; }}
         blockquote {{ border-left: 4px solid var(--primary); background: #ecfdf5; padding: 14px 18px; border-radius: 0 10px 10px 0; margin: 20px 0; color: #065f46; }}
         hr {{ border: none; border-top: 1px solid var(--border-color); margin: 32px 0; }}
+        figure {{ margin: 20px 0 24px; }}
+        figure img {{ width: 100%; border: 1px solid var(--border-color); border-radius: 10px; }}
+        figcaption {{ margin-top: 8px; font-size: 0.88rem; color: var(--text-muted); }}
         a {{ color: var(--primary-dark); }}
         .doc-nav {{ margin-bottom: 24px; font-size: 0.9rem; }}
         .print-btn {{ display: inline-block; background: var(--primary); color: #ffffff; padding: 12px 24px; border-radius: 10px; text-decoration: none; font-weight: 700; font-size: 0.92rem; float: right; }}
@@ -271,10 +295,17 @@ def render_html(doc: Document, name: str, title: str) -> str:
             parts.append(f"        <p>{inline_html(block.text)}</p>")
         elif block.kind == "list":
             tag = "ol" if block.ordered else "ul"
+            attrs = f' start="{block.start}"' if block.ordered and block.start > 1 else ""
             entries = "".join(
                 f"\n            <li>{inline_html(item)}</li>" for item in block.items
             )
-            parts.append(f"        <{tag}>{entries}\n        </{tag}>")
+            parts.append(f"        <{tag}{attrs}>{entries}\n        </{tag}>")
+        elif block.kind == "image":
+            alt = html.escape(block.text, quote=True)
+            parts.append(
+                f'        <figure><img src="{html.escape(block.src, quote=True)}" alt="{alt}" loading="lazy">'
+                f"<figcaption>{inline_html(block.text)}</figcaption></figure>"
+            )
         elif block.kind == "code":
             parts.append(
                 "        <pre><code>"
@@ -374,6 +405,8 @@ def render_pdf(doc: Document, path: Path) -> None:
                                leading=12, textColor=colors.HexColor("#e2e8f0"))
     quoteStyle = ParagraphStyle("quote", parent=body, fontSize=9.2, leading=14,
                                 textColor=colors.HexColor("#065f46"), leftIndent=8)
+    captionStyle = ParagraphStyle("caption", parent=body, fontSize=8.4, leading=12,
+                                  textColor=colors.HexColor("#475569"), spaceBefore=4)
     cell = ParagraphStyle("cell", parent=body, fontSize=8.4, leading=12, spaceAfter=0)
     cellHead = ParagraphStyle("cellHead", parent=cell, fontName="NanumGothicBold", textColor=ink)
 
@@ -440,6 +473,16 @@ def render_pdf(doc: Document, path: Path) -> None:
             ]))
             story.append(table)
             story.append(Spacer(1, 8))
+        elif block.kind == "image":
+            from reportlab.platypus import Image
+            file = DOCS / block.src
+            if file.exists():
+                picture = Image(str(file))
+                scale = frame_width / picture.imageWidth
+                picture.drawWidth, picture.drawHeight = frame_width, picture.imageHeight * scale
+                story.append(picture)
+                story.append(Paragraph(inline_pdf(block.text), captionStyle))
+                story.append(Spacer(1, 8))
         elif block.kind == "rule":
             story.append(Spacer(1, 4))
             story.append(HRFlowable(width="100%", thickness=0.6, color=colors.HexColor("#e2e8f0")))
@@ -494,6 +537,9 @@ def main() -> None:
         doc = parse_markdown(source.read_text(encoding="utf-8"))
         title = TARGETS.get(name, doc.title or name)
         (DOCS / f"{name}.html").write_text(render_html(doc, name, title), encoding="utf-8")
+        if name in SHARED_PDF:
+            print(f"{name}: html 생성 (블록 {len(doc.blocks)}개) — pdf 는 md2pdf.mjs 로 굽는다 (README 문서 산출물 참고)")
+            continue
         render_pdf(doc, DOCS / f"{name}.pdf")
         print(f"{name}: html + pdf 생성 (블록 {len(doc.blocks)}개)")
 
