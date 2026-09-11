@@ -124,11 +124,25 @@ API/MCP 세부사항은 [docs/API_AND_MCP.md](docs/API_AND_MCP.md), 보안·배�
 
 ```bash
 pip install reportlab
-python3 scripts/build-docs.py             # docs 전체 HTML + PDF 재생성
+python3 scripts/build-docs.py             # docs 전체 HTML(+ 보고서 PDF) 재생성
 python3 scripts/build-docs.py ADMIN_GUIDE  # 특정 문서만
 ```
 
-PDF는 `docs/fonts/NanumGothic.ttf` 를 임베드하므로 한글 폰트가 없는 환경에서도 동일하게 열린다.
+보고서 PDF는 `docs/fonts/NanumGothic.ttf` 를 임베드하므로 한글 폰트가 없는 환경에서도 동일하게 열린다.
+
+사용자 가이드([docs/USER_GUIDE.md](docs/USER_GUIDE.md))와 관리자 가이드([docs/ADMIN_GUIDE.md](docs/ADMIN_GUIDE.md))는 다른 프로젝트와 서식을 맞추기 위해 PDF를 공용 도구로 굽는다. 두 문서가 싣는 화면 캡처는 `docs/assets/guide/` 에 있으며, 실제로 띄운 SeatOn을 찍은 것만 둔다.
+
+```bash
+# 1. 캡처 — 버려도 되는 로컬 배포를 가리킨다. 시드가 없으면 채우고, 만든 API 키는 폐기한다.
+cd web && GUIDE_SHOT_BASE_URL=http://127.0.0.1:8080 \
+GUIDE_SHOT_USERNAME=admin GUIDE_SHOT_PASSWORD=... node e2e/guide-shots.mjs
+
+# 2. PDF — aidev 저장소의 공용 변환기
+node ../aidev/tools/guide/md2pdf.mjs docs/USER_GUIDE.md docs/USER_GUIDE.pdf \
+  --title "사용자 가이드" --subtitle "좌석맵 검색부터 도면 등록·배정·MCP 연동까지" --project SeatOn --version v1.4.0
+node ../aidev/tools/guide/md2pdf.mjs docs/ADMIN_GUIDE.md docs/ADMIN_GUIDE.pdf \
+  --title "관리자 가이드" --subtitle "설치·설정·계정·운영·장애 대응·보안" --project SeatOn --version v1.4.0
+```
 
 ## 릴리스
 
