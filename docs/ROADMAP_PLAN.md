@@ -1,6 +1,6 @@
 # SeatOn 엔터프라이즈 중장기 기술 로드맵 (Product Roadmap Plan)
 
-- **문서 버전**: v1.4.0 ~ v3.0-VISION
+- **문서 버전**: v1.4.1 ~ v3.0-VISION
 - **작성일자**: 2026년 8월 26일
 - **문서 분류**: 비즈니스 및 아키텍처 중장기 로드맵 (Strategic Product Roadmap)
 
