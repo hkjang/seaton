@@ -258,7 +258,19 @@ INSERT INTO settings(key, value, secret) VALUES
  ('hr.sync_enabled', 'false', false),
  ('hr.api_url', '', false),
  ('hr.api_token', '', true),
- ('hr.schedule', '0 2 * * *', false)
+ ('hr.schedule', '0 2 * * *', false),
+ ('tracking.enabled', 'false', false),
+ ('tracking.provider', 'momento', false),
+ ('tracking.momento_url', '', false),
+ ('tracking.momento_site_id', '', false),
+ ('tracking.momento_proxy', 'true', false),
+ ('tracking.measurement_id', '', false),
+ ('tracking.matomo_url', '', false),
+ ('tracking.matomo_site_id', '', false),
+ ('tracking.custom_snippet', '', false),
+ ('tracking.allowed_hosts', '', false),
+ ('tracking.include_admin', 'false', false),
+ ('tracking.placement', 'head', false)
 ON CONFLICT (key) DO NOTHING;
 
 INSERT INTO schema_migrations(version) VALUES (1) ON CONFLICT DO NOTHING;

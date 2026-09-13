@@ -172,6 +172,9 @@ await page.getByRole("tab", { name: "보안 · 키" }).click();
 await shot("admin-settings-security");
 await page.getByRole("tab", { name: "AI 분석" }).click();
 await shot("admin-settings-ai");
+await page.getByRole("tab", { name: "방문 추적" }).click();
+await page.getByRole("heading", { name: "정책이 차단한 출처" }).waitFor();
+await shot("admin-settings-tracking");
 
 // 내 API 키 — 만들고, 원문 화면을 찍고, 폐기한다.
 await page.goto("/profile/keys");

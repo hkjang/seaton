@@ -18,6 +18,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/hkjang/seaton/internal/platform"
+	"github.com/hkjang/seaton/internal/tracking"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -31,10 +32,18 @@ type Server struct {
 	commit   string
 	builtAt  string
 	analyses runningAnalyses
+	// violations 는 브라우저가 신고한 정책 차단을 모은다. 메모리에만 두는
+	// 진단 도구라 재시작하면 비고, 그래도 되는 정보다.
+	violations *tracking.Recorder
+	// trackingConfig 는 현재 추적 설정을 읽는다. 기본은 settings 테이블이고,
+	// 테스트는 데이터베이스 없이 고정 설정을 넣는다.
+	trackingConfig func(context.Context) tracking.Config
 }
 
 func NewServer(db *pgxpool.Pool, keys *platform.Keyring, logger *slog.Logger, webFS fs.FS, version, commit, builtAt string) *Server {
-	return &Server{db: db, keys: keys, logger: logger, webFS: webFS, version: version, commit: commit, builtAt: builtAt}
+	s := &Server{db: db, keys: keys, logger: logger, webFS: webFS, version: version, commit: commit, builtAt: builtAt, violations: tracking.NewRecorder()}
+	s.trackingConfig = s.loadTracking
+	return s
 }
 
 func (s *Server) Routes() http.Handler {
@@ -51,6 +60,7 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/auth/oidc/start", s.oidcStart)
 		r.Get("/auth/oidc/callback", s.oidcCallback)
 		r.Get("/openapi.json", s.openAPI)
+		r.Post("/tracking/csp-report", s.cspReport)
 		r.Group(func(r chi.Router) {
 			r.Use(s.authenticate)
 			r.Get("/auth/me", s.me)
@@ -105,12 +115,15 @@ func (s *Server) Routes() http.Handler {
 				r.Post("/settings/oidc/test", s.testOIDC)
 				r.Post("/settings/hr/sync", s.syncEmployeesNow)
 				r.Post("/settings/ai/vlm/test", s.testVLM)
+				r.Get("/settings/tracking/violations", s.listTrackingViolations)
+				r.Delete("/settings/tracking/violations", s.forgetTrackingViolations)
 				r.Get("/users", s.listUsers)
 				r.Patch("/users/{userID}", s.updateUser)
 			})
 		})
 	})
 	r.With(s.authenticate).Post("/mcp", s.mcp)
+	r.HandleFunc(tracking.ProxyPrefix+"/*", s.momentoProxy)
 	r.Handle("/*", s.spaHandler())
 	return r
 }
@@ -121,7 +134,7 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "same-origin")
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+		w.Header().Set("Content-Security-Policy", basePolicy)
 		next.ServeHTTP(w, r)
 	})
 }
@@ -180,8 +193,7 @@ func (s *Server) spaHandler() http.Handler {
 			writeError(w, http.StatusServiceUnavailable, "ui_unavailable", "UI 빌드가 포함되지 않았습니다")
 			return
 		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write(b)
+		s.servePage(w, r, b)
 	})
 }
 
