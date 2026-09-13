@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SeatOn 엔터프라이즈 관리자 가이드 (Admin Guide)</title>
-    <meta name="description" content="SeatOn v1.4.1 기준. 화면을 쓰는 사람을 위한 조작법은 사용자 가이드USER_GUIDE.md에 있으며, 이 문서는 그 화면을 띄워 놓고 지키는 사람을 위한 것입니다. API 세부는 API_AND_MCP.mdAPI_AND_MCP.md, 내부 구조는 ARCHITECTURE.mdARCHITECTURE.md를 봅니다.">
+    <meta name="description" content="SeatOn v1.4.2 기준. 화면을 쓰는 사람을 위한 조작법은 사용자 가이드USER_GUIDE.md에 있으며, 이 문서는 그 화면을 띄워 놓고 지키는 사람을 위한 것입니다. API 세부는 API_AND_MCP.mdAPI_AND_MCP.md, 내부 구조는 ARCHITECTURE.mdARCHITECTURE.md를 봅니다.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
@@ -56,7 +56,7 @@
         <div class="header-meta">
             <h1>SeatOn 관리자 가이드</h1>
         </div>
-        <p>SeatOn v1.4.1 기준. 화면을 쓰는 사람을 위한 조작법은 <a href="USER_GUIDE.md">사용자 가이드</a>에 있으며, 이 문서는 그 화면을 띄워 놓고 지키는 사람을 위한 것입니다. API 세부는 <a href="API_AND_MCP.md">API_AND_MCP.md</a>, 내부 구조는 <a href="ARCHITECTURE.md">ARCHITECTURE.md</a>를 봅니다.</p>
+        <p>SeatOn v1.4.2 기준. 화면을 쓰는 사람을 위한 조작법은 <a href="USER_GUIDE.md">사용자 가이드</a>에 있으며, 이 문서는 그 화면을 띄워 놓고 지키는 사람을 위한 것입니다. API 세부는 <a href="API_AND_MCP.md">API_AND_MCP.md</a>, 내부 구조는 <a href="ARCHITECTURE.md">ARCHITECTURE.md</a>를 봅니다.</p>
         <h2>1. 구성 요소</h2>
         <table>
             <thead><tr><th>구성 요소</th><th>무엇</th><th>주고받는 것</th></tr></thead>
@@ -72,7 +72,7 @@
         </table>
         <p>컨테이너는 <code>read_only</code> 루트, <code>cap_drop: ALL</code>, <code>no-new-privileges</code>, UID 10001로 돌며 <code>/tmp</code>만 tmpfs로 씁니다. 이미지 크기는 약 186MB이고 PDF 도면 변환용 <code>poppler-utils</code>가 들어 있습니다.</p>
         <h2>2. 설치</h2>
-        <p>릴리즈 자산 <code>SeatOn-v1.4.1.tar.gz</code>(GitHub Release 첨부)와 이 저장소의 <code>compose.yaml</code> 하나면 됩니다. PostgreSQL은 외부 또는 사내 것을 준비합니다(빈 데이터베이스와 소유 계정만 있으면 스키마는 SeatOn이 만듭니다).</p>
+        <p>릴리즈 자산 <code>SeatOn-v1.4.2.tar.gz</code>(GitHub Release 첨부)와 이 저장소의 <code>compose.yaml</code> 하나면 됩니다. PostgreSQL은 외부 또는 사내 것을 준비합니다(빈 데이터베이스와 소유 계정만 있으면 스키마는 SeatOn이 만듭니다).</p>
         <table>
             <thead><tr><th>항목</th><th>값</th></tr></thead>
             <tbody>
@@ -84,14 +84,14 @@
             </tbody>
         </table>
         <h3>2.1 처음부터 끝까지</h3>
-        <pre><code># 1. 이미지 적재 — seaton:v1.4.1 태그가 생긴다
-docker load &lt; SeatOn-v1.4.1.tar.gz
+        <pre><code># 1. 이미지 적재 — seaton:v1.4.2 태그가 생긴다
+docker load &lt; SeatOn-v1.4.2.tar.gz
 
 # 2. 필수 환경변수 3개 + Compose 이미지 태그
 export POSTGRES_DSN='postgres://seaton:change-db-password@postgres.intra:5432/seaton?sslmode=require'
 export BOOTSTRAP_ADMIN='admin'
 export BOOTSTRAP_ADMIN_PASSWORD='change-this-strong-password'   # 12자 이상
-export SEATON_IMAGE_TAG='v1.4.1'
+export SEATON_IMAGE_TAG='v1.4.2'
 
 # 3. 기동
 docker compose up -d
@@ -145,6 +145,7 @@ curl -s http://127.0.0.1:8080/api/v1/version</code></pre>
                 <tr><td><code>oidc.enabled</code></td><td>Keycloak SSO 사용</td><td><code>false</code></td><td>켜면 로그인 화면에 <strong>사내 SSO로 로그인</strong> 단추가 나타남</td></tr>
                 <tr><td><code>auth.local_enabled</code></td><td>로컬 관리자 로그인 허용</td><td><code>true</code></td><td>끄면 아이디·비밀번호 로그인이 <code>403 local_login_disabled</code>. <strong>SSO가 검증되기 전에는 끄지 말 것</strong></td></tr>
                 <tr><td><code>oidc.auto_provision</code></td><td>SSO 사용자 자동 생성</td><td><code>true</code></td><td>첫 SSO 로그인 때 사용자 자동 생성</td></tr>
+                <tr><td><code>oidc.auto_login</code></td><td>Keycloak 세션이 있으면 자동 로그인</td><td><code>false</code></td><td>켜면 Keycloak에 이미 로그인한 사람은 로그인 화면 없이 바로 들어옴(§3.3 조용한 로그인). <code>oidc.enabled</code>가 켜져 있을 때만 효과</td></tr>
                 <tr><td><code>oidc.issuer_url</code></td><td>Keycloak Issuer URL</td><td>빈 값</td><td>예 <code>https://keycloak.intra/realms/company</code>. Discovery 문서에서 나머지 엔드포인트를 자동 구성</td></tr>
                 <tr><td><code>oidc.client_id</code></td><td>Client ID</td><td>빈 값</td><td></td></tr>
                 <tr><td><code>oidc.client_secret</code></td><td>Client Secret</td><td>빈 값</td><td>비밀값(암호화 저장)</td></tr>
@@ -199,6 +200,16 @@ curl -s http://127.0.0.1:8080/api/v1/version</code></pre>
             <li><strong>Keycloak SSO 사용</strong>을 켜고 저장합니다. 다른 브라우저에서 SSO 로그인이 되는 것을 확인한 뒤에야 <strong>로컬 관리자 로그인 허용</strong>을 끌지 결정합니다.</li>
         </ol>
         <p>SSO 사용자는 첫 로그인 때 자동 생성되고 그룹으로 역할이 정해집니다. 이미 <code>system_admin</code>인 사용자는 그룹이 바뀌어도 강등되지 않습니다.</p>
+        <p><strong>조용한 로그인(<code>oidc.auto_login</code>)</strong></p>
+        <p>Keycloak에 이미 로그인한 사람이 SeatOn을 열었을 때 로그인 화면을 건너뛰게 하려면 <strong>Keycloak 세션이 있으면 자동 로그인</strong>을 켭니다. 기본값은 꺼짐이며, 꺼진 설치에서는 아무것도 달라지지 않습니다.</p>
+        <p>동작은 다음과 같습니다.</p>
+        <ol>
+            <li>세션이 없는 브라우저가 화면 경로(<code>/</code>, <code>/admin/...</code> 등)를 열면 로그인 화면 대신 <code>GET /api/v1/auth/oidc/start?prompt=none&amp;returnTo=&lt;원래 경로&gt;</code>로 이동합니다. 숨은 iframe이 아니라 최상위 이동이므로 서드파티 쿠키가 막힌 브라우저에서도 동작합니다.</li>
+            <li>서버는 <code>oidc.auto_login</code>이 켜져 있을 때만 Keycloak에 <code>prompt=none</code>을 붙입니다. 꺼져 있으면 주소에 <code>prompt=none</code>이 있어도 평범한 로그인으로 바꿉니다 — 누구든 주소를 고쳐 흐름을 바꿀 수 없습니다.</li>
+            <li>Keycloak에 세션이 있으면 화면 없이 인가 코드가 돌아와 평소처럼 로그인되고 <code>returnTo</code> 자리로 갑니다(<code>/</code>로 시작하고 <code>//</code>로 시작하지 않는 경로만 받습니다). 세션이 없으면 Keycloak이 <code>error=login_required</code>를 보내고, 콜백은 이를 실패가 아닌 "세션 없음"으로 다뤄 <code>/login?sso=none</code>으로 보냅니다. 서버 로그에는 아무것도 남지 않습니다.</li>
+        </ol>
+        <p><code>prompt=none</code>이 거절된 뒤 다시 시도하면 브라우저가 Keycloak과 SeatOn 사이를 끝없이 오가므로, 화면은 세 겹으로 재시도를 막습니다: 한 탭 세션에 한 번만 시도(<code>sessionStorage</code>, 새 탭은 다시 시도), 로그아웃 단추로 나간 뒤에는 다시 로그인하기 전까지 시도하지 않음, 주소에 <code>?sso=none</code>이 붙어 있으면 시도하지 않음. 저장소를 읽지 못하는 사생활 보호 모드에서는 "이미 시도했다"로 쳐서 시도하지 않습니다. 로그인·콜백·API·MCP·헬스 경로에서는 시도하지 않습니다.</p>
+        <p>로그인 화면이 깜빡이며 반복된다면 브라우저 주소가 <code>/login?sso=none</code>으로 끝나는지, 리버스 프록시가 쿼리 문자열을 지우지 않는지 확인합니다.</p>
         <h3>3.4 좌석 인식 엔진과 사내 비전 모델</h3>
         <figure><img src="assets/guide/admin-settings-ai.png" alt="시스템 설정 · AI 분석 — 좌석 인식 엔진 선택과 신뢰도 기준, VLM 엔드포인트·모델·제한 시간·타일 수 등" loading="lazy"><figcaption>시스템 설정 · AI 분석 — 좌석 인식 엔진 선택과 신뢰도 기준, VLM 엔드포인트·모델·제한 시간·타일 수 등</figcaption></figure>
         <p>기본값 <code>cv</code>는 외부 통신이 전혀 없습니다. <code>vlm</code>·<code>hybrid</code>를 쓰려면 사내 추론 서버 주소를 넣고 <strong>설정 저장</strong> 뒤 <strong>저장 후 VLM 연결 시험</strong>(<code>POST /api/v1/settings/ai/vlm/test</code>)으로 주소·인증·응답 형식·좌표계를 한 번에 확인합니다. 엔진별 동작·실측·실패 처리는 §8에 있습니다.</p>
@@ -226,7 +237,7 @@ curl -s http://127.0.0.1:8080/api/v1/version</code></pre>
             <tbody>
                 <tr><td><code>/healthz</code></td><td>GET</td><td>없음</td><td>프로세스 살아 있음 <code>{"status":"ok"}</code>. 컨테이너 헬스체크가 이걸 봄</td></tr>
                 <tr><td><code>/readyz</code></td><td>GET</td><td>없음</td><td>DB <code>Ping</code> 성공 시 <code>{"status":"ready"}</code>, 실패 시 <code>503 database_unavailable</code></td></tr>
-                <tr><td><code>/api/v1/version</code></td><td>GET</td><td>없음</td><td><code>{"name":"SeatOn","version":"1.4.1","commit":"…","builtAt":"…"}</code></td></tr>
+                <tr><td><code>/api/v1/version</code></td><td>GET</td><td>없음</td><td><code>{"name":"SeatOn","version":"1.4.2","commit":"…","builtAt":"…"}</code></td></tr>
                 <tr><td><code>/api/v1/dashboard</code></td><td>GET</td><td>좌석 관리자</td><td>운영 준비도·연동 상태·처리 필요 건수</td></tr>
             </tbody>
         </table>
@@ -234,7 +245,7 @@ curl -s http://127.0.0.1:8080/api/v1/version</code></pre>
         <figure><img src="assets/guide/admin-actions-queue.png" alt="처리필요 — 운영 준비도(사업장·층·게시·직원·SSO·인사 동기화)와 연동 상태" loading="lazy"><figcaption>처리필요 — 운영 준비도(사업장·층·게시·직원·SSO·인사 동기화)와 연동 상태</figcaption></figure>
         <h3>5.2 로그</h3>
         <p>표준 출력에 JSON 한 줄씩(<code>log/slog</code>) 찍힙니다. <code>docker compose logs -f seaton</code>으로 봅니다. 요청마다 <code>"msg":"request"</code>에 메서드·경로·소요 시간·<code>request_id</code>가 남습니다.</p>
-        <pre><code>{"time":"2026-09-11T11:41:57Z","level":"INFO","msg":"SeatOn started","address":":8080","version":"1.4.1","commit":"…"}
+        <pre><code>{"time":"2026-09-11T11:41:57Z","level":"INFO","msg":"SeatOn started","address":":8080","version":"1.4.2","commit":"…"}
 {"time":"…","level":"INFO","msg":"request","method":"GET","path":"/readyz","duration_ms":0,"request_id":"…"}
 {"time":"…","level":"INFO","msg":"도면 분석 완료","jobId":"…","floorMapId":"…","engine":"cv","detected":30,"review":6}</code></pre>
         <p>업무 감사 로그는 별도로 DB <code>audit_logs</code> 테이블에 사용자·IP·대상과 함께 쌓입니다(<code>auth.login</code>, <code>settings.update</code>, <code>floor_map.publish</code>, <code>assignment.create</code>, <code>api_key.revoke</code> 등). 좌석 이동 이력은 <strong>변경 이력</strong> 화면에서 CSV로 내보낼 수 있습니다.</p>
@@ -270,9 +281,9 @@ export SEATON_IMAGE_TAG='v1.5.0'
 docker compose up -d
 curl -s http://127.0.0.1:8080/api/v1/version    # "version":"1.5.0"</code></pre>
         <p>되돌릴 때는 태그를 이전 값으로 바꿔 다시 올립니다. 새 버전이 스키마를 바꾼 뒤라면 이전 바이너리가 그 스키마를 이해한다는 보장이 없으므로, 백업한 덤프를 먼저 복원합니다.</p>
-        <pre><code>export SEATON_IMAGE_TAG='v1.4.1'
+        <pre><code>export SEATON_IMAGE_TAG='v1.4.2'
 docker compose up -d</code></pre>
-        <p>분석이 진행 중일 때 재시작하면 그 잡은 실패로 정리되고 도면은 다시 분석할 수 있는 상태로 돌아옵니다. 릴리즈 자산은 <code>SeatOn-v&lt;버전&gt;.tar.gz</code> → <code>seaton:v&lt;버전&gt;</code> 이름 규칙을 따르고, 애플리케이션이 알리는 버전 문자열은 <code>v</code> 없는 <code>1.4.1</code>입니다.</p>
+        <p>분석이 진행 중일 때 재시작하면 그 잡은 실패로 정리되고 도면은 다시 분석할 수 있는 상태로 돌아옵니다. 릴리즈 자산은 <code>SeatOn-v&lt;버전&gt;.tar.gz</code> → <code>seaton:v&lt;버전&gt;</code> 이름 규칙을 따르고, 애플리케이션이 알리는 버전 문자열은 <code>v</code> 없는 <code>1.4.2</code>입니다.</p>
         <h2>6. 장애 대응</h2>
         <table>
             <thead><tr><th>증상</th><th>확인할 곳</th><th>조치</th></tr></thead>
