@@ -38,10 +38,14 @@ func (s *Server) authConfig(w http.ResponseWriter, r *http.Request) {
 	companyName, _ := s.getSetting(r.Context(), "general.company_name")
 	local, _ := s.getSetting(r.Context(), "auth.local_enabled")
 	oidcEnabled, _ := s.getSetting(r.Context(), "oidc.enabled")
+	autoLogin, _ := s.getSetting(r.Context(), "oidc.auto_login")
+	// oidcAutoLogin 은 브라우저가 로그인 화면을 그리기 전에 조용한 SSO 를
+	// 시도할지 정하는 데 쓴다. 시도 여부 자체는 관리자 설정에만 묶인다.
 	writeJSON(w, http.StatusOK, map[string]any{
 		"serviceName": serviceName, "companyName": companyName,
 		"localEnabled": local == "true", "oidcEnabled": oidcEnabled == "true",
-		"version": map[string]string{"version": s.version, "commit": s.commit},
+		"oidcAutoLogin": oidcEnabled == "true" && autoLogin == "true",
+		"version":       map[string]string{"version": s.version, "commit": s.commit},
 	})
 }
 
@@ -276,24 +280,80 @@ func (s *Server) oidcStart(w http.ResponseWriter, r *http.Request) {
 	nonce, _ := platform.RandomToken(24)
 	verifier := oauth2.GenerateVerifier()
 	returnTo := r.URL.Query().Get("returnTo")
-	if !strings.HasPrefix(returnTo, "/") || strings.HasPrefix(returnTo, "//") {
+	if !safeReturnTo(returnTo) {
 		returnTo = "/"
 	}
-	_, err = s.db.Exec(r.Context(), `INSERT INTO oidc_states(state_hash,nonce,verifier,return_to,expires_at) VALUES($1,$2,$3,$4,now()+interval '10 minutes')`, s.keys.Digest(state), nonce, verifier, returnTo)
+	// prompt=none 은 제공자에게 "있는 세션으로만 답하라"고 요구한다. 화면을
+	// 절대 그리지 않으므로 인가 코드가 곧바로 오거나 login_required 가 온다.
+	// 관리자가 auto_login 을 켜지 않았으면 조용히 평범한 로그인으로 바꾼다 —
+	// 주소에 ?prompt=none 을 붙이는 것만으로 흐름이 달라져서는 안 된다.
+	autoLogin, _ := s.getSetting(r.Context(), "oidc.auto_login")
+	silent := silentLoginRequested(r, autoLogin == "true")
+	_, err = s.db.Exec(r.Context(), `INSERT INTO oidc_states(state_hash,nonce,verifier,return_to,silent,expires_at) VALUES($1,$2,$3,$4,$5,now()+interval '10 minutes')`, s.keys.Digest(state), nonce, verifier, returnTo, silent)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "oidc_state_failed", "SSO 요청을 시작하지 못했습니다")
 		return
 	}
 	cfg := oauth2.Config{ClientID: clientID, ClientSecret: secret, Endpoint: provider.Endpoint(), RedirectURL: requestBaseURL(r) + "/api/v1/auth/oidc/callback", Scopes: s.oidcScopes(r.Context())}
-	http.Redirect(w, r, cfg.AuthCodeURL(state, oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier)), http.StatusFound)
+	http.Redirect(w, r, oidcAuthCodeURL(cfg, state, nonce, verifier, silent), http.StatusFound)
+}
+
+// silentLoginRequested 는 이 시작 요청을 prompt=none 으로 보낼지 정한다.
+// 요청이 원해도 관리자 설정(auto_login)이 꺼져 있으면 거절한다.
+func silentLoginRequested(r *http.Request, autoLogin bool) bool {
+	return autoLogin && r.URL.Query().Get("prompt") == "none"
+}
+
+func oidcAuthCodeURL(cfg oauth2.Config, state, nonce, verifier string, silent bool) string {
+	opts := []oauth2.AuthCodeOption{oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier)}
+	if silent {
+		opts = append(opts, oauth2.SetAuthURLParam("prompt", "none"))
+	}
+	return cfg.AuthCodeURL(state, opts...)
+}
+
+// safeReturnTo 는 로그인 뒤 돌아갈 자리를 같은 사이트 안으로 묶는다. '/' 로
+// 시작하고 '//' 로 시작하지 않는 경로만 받는다 — 그러지 않으면 이 로그인
+// 흐름이 밖으로 내보내는 발판이 된다. 브라우저는 '/\' 를 '//' 로 읽으므로
+// 그것도 같이 막는다.
+func safeReturnTo(value string) bool {
+	if value == "" || !strings.HasPrefix(value, "/") || strings.HasPrefix(value, "//") || strings.HasPrefix(value, `/\`) || strings.ContainsAny(value, "\r\n") {
+		return false
+	}
+	parsed, err := url.Parse(value)
+	return err == nil && !parsed.IsAbs() && parsed.Host == ""
+}
+
+// silentSSOErrors 는 prompt=none 에 세션이 없을 때 제공자가 돌려주는 대답이다.
+// 실패가 아니라 "로그인 화면을 보여 달라"는 뜻이다.
+var silentSSOErrors = map[string]bool{"login_required": true, "interaction_required": true, "consent_required": true}
+
+// oidcErrorRedirect 는 제공자가 error 로 돌아왔을 때 브라우저를 보낼 자리다.
+// 조용한 시도였으면 /login?sso=none 으로 보내 주소에 표시를 남긴다 —
+// 브라우저 저장소가 지워졌더라도 이 표시가 있으면 다시 시도하지 않는다.
+// 조용한 시도가 세션 없음 외의 이유로 거절되면 표시와 함께 오류도 알린다.
+func oidcErrorRedirect(silent bool, providerError string) string {
+	if !silent {
+		return "/login?error=" + url.QueryEscape(providerError)
+	}
+	if silentSSOErrors[providerError] {
+		return "/login?sso=none"
+	}
+	return "/login?sso=none&error=" + url.QueryEscape(providerError)
 }
 
 func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
+	state := r.URL.Query().Get("state")
 	if e := r.URL.Query().Get("error"); e != "" {
-		http.Redirect(w, r, "/login?error="+url.QueryEscape(e), http.StatusFound)
+		// 제공자는 거절을 코드 대신 error 로 알린다. prompt=none 은 세션이 없을
+		// 때마다 login_required 를 보내는데, 그것은 평범한 대답이지 실패가 아니다.
+		silent := false
+		if state != "" {
+			_ = s.db.QueryRow(r.Context(), `DELETE FROM oidc_states WHERE state_hash=$1 RETURNING silent`, s.keys.Digest(state)).Scan(&silent)
+		}
+		http.Redirect(w, r, oidcErrorRedirect(silent, e), http.StatusFound)
 		return
 	}
-	state := r.URL.Query().Get("state")
 	var nonce, verifier, returnTo string
 	err := s.db.QueryRow(r.Context(), `DELETE FROM oidc_states WHERE state_hash=$1 AND expires_at>now() RETURNING nonce,verifier,return_to`, s.keys.Digest(state)).Scan(&nonce, &verifier, &returnTo)
 	if err != nil {
@@ -362,6 +422,9 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r.Context(), u.ID, "auth.login", "user", u.ID, r.RemoteAddr, map[string]string{"source": "oidc"})
+	if !safeReturnTo(returnTo) {
+		returnTo = "/"
+	}
 	http.Redirect(w, r, returnTo, http.StatusFound)
 }
 

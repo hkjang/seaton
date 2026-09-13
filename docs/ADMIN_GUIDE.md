@@ -105,6 +105,7 @@ Compose 전용(컨테이너에 전달되지 않음):
 | `oidc.enabled` | Keycloak SSO 사용 | `false` | 켜면 로그인 화면에 **사내 SSO로 로그인** 단추가 나타남 |
 | `auth.local_enabled` | 로컬 관리자 로그인 허용 | `true` | 끄면 아이디·비밀번호 로그인이 `403 local_login_disabled`. **SSO가 검증되기 전에는 끄지 말 것** |
 | `oidc.auto_provision` | SSO 사용자 자동 생성 | `true` | 첫 SSO 로그인 때 사용자 자동 생성 |
+| `oidc.auto_login` | Keycloak 세션이 있으면 자동 로그인 | `false` | 켜면 Keycloak에 이미 로그인한 사람은 로그인 화면 없이 바로 들어옴(§3.3 조용한 로그인). `oidc.enabled`가 켜져 있을 때만 효과 |
 | `oidc.issuer_url` | Keycloak Issuer URL | 빈 값 | 예 `https://keycloak.intra/realms/company`. Discovery 문서에서 나머지 엔드포인트를 자동 구성 |
 | `oidc.client_id` | Client ID | 빈 값 | |
 | `oidc.client_secret` | Client Secret | 빈 값 | 비밀값(암호화 저장) |
@@ -156,6 +157,20 @@ Compose 전용(컨테이너에 전달되지 않음):
 4. **Keycloak SSO 사용**을 켜고 저장합니다. 다른 브라우저에서 SSO 로그인이 되는 것을 확인한 뒤에야 **로컬 관리자 로그인 허용**을 끌지 결정합니다.
 
 SSO 사용자는 첫 로그인 때 자동 생성되고 그룹으로 역할이 정해집니다. 이미 `system_admin`인 사용자는 그룹이 바뀌어도 강등되지 않습니다.
+
+**조용한 로그인(`oidc.auto_login`)**
+
+Keycloak에 이미 로그인한 사람이 SeatOn을 열었을 때 로그인 화면을 건너뛰게 하려면 **Keycloak 세션이 있으면 자동 로그인**을 켭니다. 기본값은 꺼짐이며, 꺼진 설치에서는 아무것도 달라지지 않습니다.
+
+동작은 다음과 같습니다.
+
+1. 세션이 없는 브라우저가 화면 경로(`/`, `/admin/...` 등)를 열면 로그인 화면 대신 `GET /api/v1/auth/oidc/start?prompt=none&returnTo=<원래 경로>`로 이동합니다. 숨은 iframe이 아니라 최상위 이동이므로 서드파티 쿠키가 막힌 브라우저에서도 동작합니다.
+2. 서버는 `oidc.auto_login`이 켜져 있을 때만 Keycloak에 `prompt=none`을 붙입니다. 꺼져 있으면 주소에 `prompt=none`이 있어도 평범한 로그인으로 바꿉니다 — 누구든 주소를 고쳐 흐름을 바꿀 수 없습니다.
+3. Keycloak에 세션이 있으면 화면 없이 인가 코드가 돌아와 평소처럼 로그인되고 `returnTo` 자리로 갑니다(`/`로 시작하고 `//`로 시작하지 않는 경로만 받습니다). 세션이 없으면 Keycloak이 `error=login_required`를 보내고, 콜백은 이를 실패가 아닌 "세션 없음"으로 다뤄 `/login?sso=none`으로 보냅니다. 서버 로그에는 아무것도 남지 않습니다.
+
+`prompt=none`이 거절된 뒤 다시 시도하면 브라우저가 Keycloak과 SeatOn 사이를 끝없이 오가므로, 화면은 세 겹으로 재시도를 막습니다: 한 탭 세션에 한 번만 시도(`sessionStorage`, 새 탭은 다시 시도), 로그아웃 단추로 나간 뒤에는 다시 로그인하기 전까지 시도하지 않음, 주소에 `?sso=none`이 붙어 있으면 시도하지 않음. 저장소를 읽지 못하는 사생활 보호 모드에서는 "이미 시도했다"로 쳐서 시도하지 않습니다. 로그인·콜백·API·MCP·헬스 경로에서는 시도하지 않습니다.
+
+로그인 화면이 깜빡이며 반복된다면 브라우저 주소가 `/login?sso=none`으로 끝나는지, 리버스 프록시가 쿼리 문자열을 지우지 않는지 확인합니다.
 
 ### 3.4 좌석 인식 엔진과 사내 비전 모델
 

@@ -20,6 +20,8 @@ export interface AuthConfig {
   companyName: string;
   localEnabled: boolean;
   oidcEnabled: boolean;
+  /** Keycloak 세션이 살아 있으면 로그인 화면 없이 조용히 로그인할지(prompt=none). */
+  oidcAutoLogin?: boolean;
   version: VersionInfo;
 }
 export interface Building {

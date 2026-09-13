@@ -71,6 +71,7 @@ docker compose up -d
 4. 필요하면 `/seaton-admins`, `/seaton-seat-managers` 그룹명을 바꾼다.
 5. Keycloak의 Group Membership mapper로 `groups` claim을 ID Token에 포함한다.
 6. **저장 후 연결 테스트**로 Discovery URL과 Callback을 확인하고 SSO를 활성화한다.
+7. Keycloak에 이미 로그인한 사람이 로그인 화면 없이 바로 들어오게 하려면 **Keycloak 세션이 있으면 자동 로그인**(`oidc.auto_login`, 기본 꺼짐)을 켠다. `prompt=none` 조용한 로그인이며 동작과 재시도 방지는 관리자 가이드 §3.3에 있다.
 
 그 외 Keycloak 엔드포인트는 Issuer의 표준 Discovery 문서에서 자동 구성한다.
 
