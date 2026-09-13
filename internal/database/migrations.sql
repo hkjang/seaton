@@ -72,6 +72,9 @@ CREATE TABLE IF NOT EXISTS oidc_states (
   expires_at timestamptz NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+-- prompt=none 으로 시작한 조용한 시도인지. 콜백이 login_required 를 받았을 때
+-- 이것이 참이면 오류가 아니라 "세션 없음"이라는 평범한 대답으로 다룬다.
+ALTER TABLE oidc_states ADD COLUMN IF NOT EXISTS silent boolean NOT NULL DEFAULT false;
 
 CREATE TABLE IF NOT EXISTS buildings (
   id text PRIMARY KEY,
@@ -236,6 +239,7 @@ INSERT INTO settings(key, value, secret) VALUES
  ('oidc.admin_group', '/seaton-admins', false),
  ('oidc.seat_manager_group', '/seaton-seat-managers', false),
  ('oidc.auto_provision', 'true', false),
+ ('oidc.auto_login', 'false', false),
  ('security.session_hours', '8', false),
  ('security.api_key_days', '90', false),
  ('security.rotation_grace_hours', '24', false),

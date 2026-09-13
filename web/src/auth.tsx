@@ -8,6 +8,12 @@ import {
   type ReactNode,
 } from "react";
 import { api, postJSON, setCSRF, setSessionEndedHandler } from "./api";
+import {
+  beginSilentSso,
+  clearSilentSsoState,
+  markSignedOut,
+  shouldAttemptSilentSso,
+} from "./lib/silentSso";
 import type { AuthConfig, User, VersionInfo } from "./types";
 
 interface AuthState {
@@ -38,6 +44,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [configError, setConfigError] = useState(""),
     [loading, setLoading] = useState(true);
   const reload = useCallback(async () => {
+    // 조용한 SSO 로 제공자에게 떠나는 중이면 로딩 화면을 그대로 둔다. 로그인
+    // 화면을 잠깐 그렸다가 떠나면 사용자는 깜빡임만 본다.
+    let leaving = false;
     try {
       const c = await api<AuthConfig>("/api/v1/auth/config");
       setConfig(c);
@@ -52,9 +61,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(me.user);
         setVersion(me.version);
         setCSRF(me.csrfToken);
+        // 세션이 다시 생겼으니 로그아웃 억제와 시도 표시를 지운다.
+        clearSilentSsoState();
       } catch {
         setUser(null);
         setCSRF("");
+        // 세션이 없고 관리자가 auto_login 을 켰으면, 로그인 화면 대신 Keycloak
+        // 에 이미 있는 세션으로 조용히 로그인해 본다. 한 탭에 한 번뿐이다.
+        if (shouldAttemptSilentSso(c, window.location)) {
+          leaving = true;
+          beginSilentSso(window.location.pathname + window.location.search);
+        }
       }
     } catch (e) {
       // 설정을 못 받아 온 것은 설정이 비어 있다는 뜻이 아니라 서버에 닿지
@@ -64,7 +81,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         e instanceof Error ? e.message : "서버에 연결하지 못했습니다",
       );
     } finally {
-      setLoading(false);
+      if (!leaving) setLoading(false);
     }
   }, []);
   useEffect(() => {
@@ -90,6 +107,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
   const clearSessionEnded = useCallback(() => setSessionEnded(""), []);
   const logout = useCallback(async () => {
+    // 스스로 로그아웃한 사람을 곧바로 다시 조용히 로그인시키면 로그아웃이
+    // 고장 난 것처럼 보인다. 표시를 먼저 남긴다.
+    markSignedOut();
     try {
       await api<void>("/api/v1/auth/logout", { method: "POST" });
     } finally {

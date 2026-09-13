@@ -283,7 +283,9 @@ export function SettingsPage() {
             ? "로컬 관리자 로그인 허용"
             : key === "oidc.auto_provision"
               ? "SSO 사용자 자동 생성"
-              : "자동 동기화 사용"
+              : key === "oidc.auto_login"
+                ? "Keycloak 세션이 있으면 자동 로그인"
+                : "자동 동기화 사용"
       }
     />
   );
@@ -392,6 +394,7 @@ export function SettingsPage() {
                   {switchValue("oidc.enabled")}
                   {switchValue("auth.local_enabled")}
                   {switchValue("oidc.auto_provision")}
+                  {switchValue("oidc.auto_login")}
                 </Stack>
                 <Alert severity="info" sx={{ mb: 3 }}>
                   Keycloak Client의 Valid Redirect URI에{" "}
