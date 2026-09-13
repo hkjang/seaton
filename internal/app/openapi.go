@@ -25,6 +25,8 @@ func (s *Server) openAPI(w http.ResponseWriter, _ *http.Request) {
 			"/floor-maps/{mapID}/analyze":     map[string]any{"post": operation("좌석 후보 분석 시작 (202, engine=cv|vlm|hybrid)", true)},
 			"/analysis-jobs/{jobID}":          map[string]any{"get": operation("분석 잡 진행 상태와 결과 조회", true)},
 			"/settings/ai/vlm/test":           map[string]any{"post": operation("사내 VLM 엔드포인트 연결 시험", true)},
+			"/settings/tracking/violations":   map[string]any{"get": operation("방문 추적 CSP 가 차단한 출처 목록", true), "delete": operation("차단 기록 비우기", true)},
+			"/tracking/csp-report":            map[string]any{"post": operation("브라우저의 CSP 위반 신고 수신 (추적이 켜진 동안만 기록)", false)},
 			"/floor-maps/{mapID}/preview":     map[string]any{"get": operation("좌석 오버레이 기준 래스터 이미지", true)},
 			"/floor-maps/{mapID}/grid":        map[string]any{"put": operation("도면 좌석 격자 보정값 저장/해제", true)},
 			"/floor-maps/{mapID}/seats/align": map[string]any{"post": operation("좌석을 도면 격자에 정렬", true)},

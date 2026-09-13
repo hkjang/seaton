@@ -17,6 +17,11 @@ import {
   Stack,
   Switch,
   Tab,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
   Tabs,
   TextField,
   Typography,
@@ -25,14 +30,32 @@ import SaveRounded from "@mui/icons-material/SaveRounded";
 import LinkRounded from "@mui/icons-material/LinkRounded";
 import CheckCircleRounded from "@mui/icons-material/CheckCircleRounded";
 import WarningAmberRounded from "@mui/icons-material/WarningAmberRounded";
+import RefreshRounded from "@mui/icons-material/RefreshRounded";
 import { api, postJSON, putJSON } from "../api";
 import { PageHeader } from "../components/AdminUI";
+import {
+  MAX_SNIPPET_BYTES,
+  TRACKING_PROVIDERS,
+  addAllowedHost,
+  snippetBytes,
+  trackingActive,
+  trackingFields,
+  usesSameOriginProxy,
+} from "../lib/tracking";
 
 type Setting = {
   key: string;
   value: string;
   secret: boolean;
   configured: boolean;
+};
+type Violation = {
+  origin: string;
+  directive: string;
+  page: string;
+  count: number;
+  lastSeen: string;
+  allowed: boolean;
 };
 const fields: Record<
   string,
@@ -42,6 +65,7 @@ const fields: Record<
     help?: string;
     secret?: boolean;
     type?: string;
+    multiline?: boolean;
   }[]
 > = {
   general: [
@@ -145,6 +169,8 @@ const fields: Record<
       help: "기본: 매일 02:00",
     },
   ],
+  // 방문 추적 칸은 provider 에 따라 달라서 trackingFields() 가 정한다.
+  tracking: [],
 };
 export function SettingsPage() {
   const [items, setItems] = useState<Setting[]>([]),
@@ -156,6 +182,8 @@ export function SettingsPage() {
     [currentPassword, setCurrentPassword] = useState(""),
     [testingVLM, setTestingVLM] = useState(false),
     [loading, setLoading] = useState(true),
+    [violations, setViolations] = useState<Violation[]>([]),
+    [violationsError, setViolationsError] = useState(""),
     [newPassword, setNewPassword] = useState("");
 
   const load = async () => {
@@ -177,6 +205,10 @@ export function SettingsPage() {
     [items],
   );
   const engine = values["ai.engine"] || "cv";
+  const trackingProvider = values["tracking.provider"] || "momento";
+  const trackingOn = trackingActive(values);
+  const tabFields =
+    tab === "tracking" ? trackingFields(trackingProvider) : fields[tab];
   const dirty = useMemo(
     () => items.some((item) => (values[item.key] ?? "") !== item.value),
     [items, values],
@@ -252,6 +284,61 @@ export function SettingsPage() {
       setError(e instanceof Error ? e.message : "동기화하지 못했습니다");
     }
   };
+  // 브라우저가 CSP 로 막은 출처. 추적이 켜진 동안 서버가 신고를 모아 둔다.
+  const loadViolations = async () => {
+    try {
+      const data = await api<{ items: Violation[] }>(
+        "/api/v1/settings/tracking/violations",
+      );
+      setViolations(data.items);
+      setViolationsError("");
+    } catch (e) {
+      setViolationsError(
+        e instanceof Error ? e.message : "차단 기록을 불러오지 못했습니다",
+      );
+    }
+  };
+  useEffect(() => {
+    if (tab === "tracking") void loadViolations();
+  }, [tab]);
+  const forgetViolations = async () => {
+    try {
+      await api<void>("/api/v1/settings/tracking/violations", {
+        method: "DELETE",
+      });
+      await loadViolations();
+      setMessage(
+        "차단 기록을 비웠습니다. 화면을 새로 고치면 아직 막히는 것만 다시 쌓입니다.",
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "기록을 비우지 못했습니다");
+    }
+  };
+  // 막힌 출처를 한 번 눌러 허용 목록에 넣고 바로 저장한다. 저장하지 않은 다른
+  // 변경도 함께 저장되므로 값을 먼저 합쳐 한 요청으로 보낸다.
+  const allowOrigin = async (origin: string) => {
+    const next = {
+      ...values,
+      "tracking.allowed_hosts": addAllowedHost(
+        values["tracking.allowed_hosts"] ?? "",
+        origin,
+      ),
+    };
+    setValues(next);
+    setSaving(true);
+    try {
+      await putJSON("/api/v1/settings", { settings: next });
+      setMessage(
+        `${origin} 을 허용 목록에 더했습니다. 새로 고친 화면부터 정책에 반영됩니다.`,
+      );
+      await load();
+      await loadViolations();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "저장하지 못했습니다");
+    } finally {
+      setSaving(false);
+    }
+  };
   const changePassword = async () => {
     try {
       await postJSON("/api/v1/auth/password", { currentPassword, newPassword });
@@ -285,7 +372,13 @@ export function SettingsPage() {
               ? "SSO 사용자 자동 생성"
               : key === "oidc.auto_login"
                 ? "Keycloak 세션이 있으면 자동 로그인"
-                : "자동 동기화 사용"
+                : key === "tracking.enabled"
+                  ? "방문 추적 사용"
+                  : key === "tracking.include_admin"
+                    ? "관리 화면(/admin, /profile)도 추적"
+                    : key === "tracking.momento_proxy"
+                      ? "같은 오리진 프록시(/momento) 사용"
+                      : "자동 동기화 사용"
       }
     />
   );
@@ -370,6 +463,12 @@ export function SettingsPage() {
                     : "CV + VLM 하이브리드"
               }
             />
+            <Chip
+              size="small"
+              color={trackingOn ? "success" : "default"}
+              variant="outlined"
+              label={`방문 추적 ${trackingOn ? "활성" : "비활성"}`}
+            />
           </Stack>
           <Tabs
             value={tab}
@@ -382,6 +481,7 @@ export function SettingsPage() {
             <Tab value="security" label="보안 · 키" />
             <Tab value="ai" label="AI 분석" />
             <Tab value="hr" label="인사 연동" />
+            <Tab value="tracking" label="방문 추적" />
           </Tabs>
           <CardContent sx={{ p: { xs: 2, md: 4 } }}>
             {tab === "oidc" && (
@@ -429,27 +529,223 @@ export function SettingsPage() {
                 </FormControl>
               </Box>
             )}
+            {tab === "tracking" && (
+              <Box mb={3}>
+                <Stack
+                  direction={{ xs: "column", sm: "row" }}
+                  spacing={2}
+                  mb={2}
+                  flexWrap="wrap"
+                >
+                  {switchValue("tracking.enabled")}
+                  {switchValue("tracking.include_admin")}
+                  {trackingProvider === "momento" &&
+                    switchValue("tracking.momento_proxy")}
+                </Stack>
+                <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+                  <FormControl sx={{ minWidth: 280 }}>
+                    <InputLabel id="tracking-provider-label">
+                      추적 도구
+                    </InputLabel>
+                    <Select
+                      labelId="tracking-provider-label"
+                      label="추적 도구"
+                      value={trackingProvider}
+                      onChange={(e) =>
+                        setValues((v) => ({
+                          ...v,
+                          "tracking.provider": e.target.value,
+                        }))
+                      }
+                    >
+                      {TRACKING_PROVIDERS.map((p) => (
+                        <MenuItem key={p.value} value={p.value}>
+                          {p.label}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                  <FormControl sx={{ minWidth: 200 }}>
+                    <InputLabel id="tracking-placement-label">
+                      넣는 자리
+                    </InputLabel>
+                    <Select
+                      labelId="tracking-placement-label"
+                      label="넣는 자리"
+                      value={values["tracking.placement"] || "head"}
+                      onChange={(e) =>
+                        setValues((v) => ({
+                          ...v,
+                          "tracking.placement": e.target.value,
+                        }))
+                      }
+                    >
+                      <MenuItem value="head">&lt;head&gt; 끝</MenuItem>
+                      <MenuItem value="body">&lt;body&gt; 끝</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Stack>
+              </Box>
+            )}
             <Grid container spacing={2.5}>
-              {fields[tab].map((f) => (
-                <Grid key={f.key} size={{ xs: 12, md: 6 }}>
+              {tabFields.map((f) => (
+                <Grid key={f.key} size={{ xs: 12, md: f.multiline ? 12 : 6 }}>
                   <TextField
                     fullWidth
                     label={f.label}
                     type={f.secret ? "password" : f.type || "text"}
+                    multiline={f.multiline}
+                    minRows={f.multiline ? 6 : undefined}
                     value={values[f.key] ?? ""}
                     onChange={(e) =>
                       setValues((v) => ({ ...v, [f.key]: e.target.value }))
                     }
+                    error={
+                      f.key === "tracking.custom_snippet" &&
+                      snippetBytes(values[f.key] ?? "") > MAX_SNIPPET_BYTES
+                    }
                     helperText={
-                      f.help ||
-                      (f.secret && configured[f.key]
-                        ? "암호화되어 저장되어 있습니다. 변경할 때만 새 값을 입력하세요."
-                        : " ")
+                      f.key === "tracking.custom_snippet"
+                        ? `${f.help} · 지금 ${snippetBytes(values[f.key] ?? "").toLocaleString()}바이트`
+                        : f.help ||
+                          (f.secret && configured[f.key]
+                            ? "암호화되어 저장되어 있습니다. 변경할 때만 새 값을 입력하세요."
+                            : " ")
+                    }
+                    slotProps={
+                      f.multiline
+                        ? { htmlInput: { style: { fontFamily: "monospace" } } }
+                        : undefined
                     }
                   />
                 </Grid>
               ))}
+              {tab === "tracking" && trackingProvider !== "none" && (
+                <Grid size={{ xs: 12 }}>
+                  <TextField
+                    fullWidth
+                    label="추가로 허용할 출처"
+                    value={values["tracking.allowed_hosts"] ?? ""}
+                    onChange={(e) =>
+                      setValues((v) => ({
+                        ...v,
+                        "tracking.allowed_hosts": e.target.value,
+                      }))
+                    }
+                    helperText="쉼표로 구분한 https://host[:port] 목록. 스니펫에서 자동으로 읽지 못한 출처를 여기에 더합니다. 아래 차단 기록의 '허용에 추가' 를 누르면 자동으로 채워집니다."
+                  />
+                </Grid>
+              )}
             </Grid>
+            {tab === "tracking" && (
+              <>
+                <Alert
+                  severity={trackingOn ? "success" : "info"}
+                  sx={{ mt: 2 }}
+                >
+                  {trackingProvider === "none"
+                    ? "추적 도구가 없으면 켜도 아무것도 붙지 않습니다."
+                    : usesSameOriginProxy(values)
+                      ? "Momento 로더와 수집 요청이 이 서비스의 /momento 경로를 거쳐 수집기로 갑니다. 외부 출처가 정책(CSP)에 등장하지 않으므로 정책을 바꿀 수 없는 설치에서도 동작합니다. Momento 사이트의 허용 도메인에 이 서비스 주소를 등록하세요."
+                      : "브라우저가 수집기에 직접 연결합니다. 정책(CSP)의 script-src·connect-src·img-src 에 수집기 출처가 자동으로 더해지고, 스니펫의 모든 <script> 에는 요청마다 다른 nonce 가 붙습니다. 'unsafe-inline' 은 쓰지 않습니다."}
+                  {trackingOn
+                    ? " 저장하면 다음에 여는 화면부터 붙습니다."
+                    : values["tracking.enabled"] === "true"
+                      ? " 필수 칸이 비어 있어 아직 붙지 않습니다."
+                      : ""}
+                </Alert>
+                <Box sx={{ mt: 3 }}>
+                  <Stack
+                    direction="row"
+                    justifyContent="space-between"
+                    alignItems="center"
+                    mb={1}
+                  >
+                    <Box>
+                      <Typography variant="h6">정책이 차단한 출처</Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        추적이 켜진 동안 브라우저가 신고한 것입니다. 스니펫이
+                        조용히 멎었다면 여기에 이유가 있습니다. 재시작하면
+                        비워집니다.
+                      </Typography>
+                    </Box>
+                    <Stack direction="row" spacing={1}>
+                      <Button
+                        size="small"
+                        startIcon={<RefreshRounded />}
+                        onClick={() => void loadViolations()}
+                      >
+                        새로 고침
+                      </Button>
+                      <Button
+                        size="small"
+                        disabled={violations.length === 0}
+                        onClick={() => void forgetViolations()}
+                      >
+                        기록 비우기
+                      </Button>
+                    </Stack>
+                  </Stack>
+                  {violationsError && (
+                    <Alert severity="warning" sx={{ mb: 1 }}>
+                      {violationsError}
+                    </Alert>
+                  )}
+                  {violations.length === 0 ? (
+                    <Typography variant="body2" color="text.secondary">
+                      차단된 출처가 없습니다.
+                    </Typography>
+                  ) : (
+                    <Table size="small" aria-label="정책이 차단한 출처">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>출처</TableCell>
+                          <TableCell>지시어</TableCell>
+                          <TableCell>화면</TableCell>
+                          <TableCell align="right">횟수</TableCell>
+                          <TableCell>마지막</TableCell>
+                          <TableCell />
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {violations.map((v) => (
+                          <TableRow key={`${v.directive} ${v.origin}`}>
+                            <TableCell sx={{ fontFamily: "monospace" }}>
+                              {v.origin}
+                            </TableCell>
+                            <TableCell>{v.directive}</TableCell>
+                            <TableCell>{v.page}</TableCell>
+                            <TableCell align="right">{v.count}</TableCell>
+                            <TableCell>
+                              {new Date(v.lastSeen).toLocaleString("ko-KR")}
+                            </TableCell>
+                            <TableCell align="right">
+                              {v.allowed ? (
+                                <Chip
+                                  size="small"
+                                  color="success"
+                                  variant="outlined"
+                                  label="허용됨"
+                                />
+                              ) : (
+                                <Button
+                                  size="small"
+                                  variant="outlined"
+                                  disabled={saving}
+                                  onClick={() => void allowOrigin(v.origin)}
+                                >
+                                  허용에 추가
+                                </Button>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </Box>
+              </>
+            )}
             {tab === "ai" && (
               <Alert
                 severity={engine === "cv" ? "info" : "warning"}
