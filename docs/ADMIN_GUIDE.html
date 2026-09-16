@@ -127,7 +127,7 @@ curl -s http://127.0.0.1:8080/api/v1/version</code></pre>
         </table>
         <p>셋 중 하나라도 비면 기동 로그에 <code>configuration error ... missing required environment variables: ...</code>가 찍히고 종료합니다.</p>
         <h3>3.2 시스템 설정 화면</h3>
-        <p>주소 <code>/admin/settings</code>. 시스템 관리자만. 상단 칩이 현재 상태(<code>Keycloak 비활성</code>, <code>인사 동기화 비활성</code>, <code>오프라인 CV 엔진</code>)를 요약하고, 오른쪽 위에 저장 여부(<code>모든 변경 저장됨</code> / <code>저장하지 않은 변경</code>)가 표시됩니다. 비밀값은 저장 후 <code><strong>*</strong><strong>*</code>로만 보이고, 빈 값이나 <code></strong><strong>*</strong>*</code>로 다시 저장하면 기존 값을 유지합니다. 모든 저장은 감사 로그(<code>settings.update</code>)에 바뀐 키 이름과 함께 남습니다.</p>
+        <p>주소 <code>/admin/settings</code>. 시스템 관리자만. 상단 칩이 현재 상태(<code>Keycloak 비활성</code>, <code>인사 동기화 비활성</code>, <code>오프라인 CV 엔진</code>, <code>방문 추적 비활성</code>, <code>메일 알림 비활성</code>)를 요약하고, 오른쪽 위에 저장 여부(<code>모든 변경 저장됨</code> / <code>저장하지 않은 변경</code>)가 표시됩니다. 비밀값은 저장 후 <code><strong>*</strong><strong>*</code>로만 보이고, 빈 값이나 <code></strong><strong>*</strong>*</code>로 다시 저장하면 기존 값을 유지합니다. 모든 저장은 감사 로그(<code>settings.update</code>)에 바뀐 키 이름과 함께 남습니다.</p>
         <figure><img src="assets/guide/admin-settings.png" alt="시스템 설정 · 일반 — 서비스 이름, 회사/조직명, 기본 언어" loading="lazy"><figcaption>시스템 설정 · 일반 — 서비스 이름, 회사/조직명, 기본 언어</figcaption></figure>
         <p>설정 키 전수(<code>internal/database/migrations.sql</code> 기본값). 화면 탭과 항목 이름을 함께 적었습니다.</p>
         <p><strong>일반</strong></p>
@@ -209,6 +209,26 @@ curl -s http://127.0.0.1:8080/api/v1/version</code></pre>
                 <tr><td><code>tracking.placement</code></td><td>넣는 자리</td><td><code>head</code></td><td><code>head</code>(<code>&lt;/head&gt;</code> 앞) 또는 <code>body</code>(<code>&lt;/body&gt;</code> 앞)</td></tr>
             </tbody>
         </table>
+        <p><strong>메일 알림</strong>(§3.7)</p>
+        <table>
+            <thead><tr><th>키</th><th>화면 항목</th><th>기본값</th><th>설명</th></tr></thead>
+            <tbody>
+                <tr><td><code>mail.enabled</code></td><td>메일 알림 사용</td><td><code>false</code></td><td>꺼짐이 기본. 새 설치에서는 아무것도 나가지 않음</td></tr>
+                <tr><td><code>mail.smtp_host</code></td><td>SMTP 릴레이 주소</td><td>빈 값</td><td>사내 릴레이(또는 <code>postra</code>) 주소. 비어 있으면 켜도 보내지 않고 로그 <code>메일 설정이 모자라 알림을 보내지 않았습니다</code></td></tr>
+                <tr><td><code>mail.smtp_port</code></td><td>포트</td><td><code>25</code></td><td>사내 릴레이는 대개 25</td></tr>
+                <tr><td><code>mail.security</code></td><td>보안 협상</td><td><code>auto</code></td><td><code>auto</code>(서버가 STARTTLS 를 알리면 씀) · <code>none</code> · <code>starttls</code>(필수) · <code>tls</code>(465 처럼 바로 TLS). <code>auto</code> 에서 포트가 465 면 <code>tls</code> 로 다룸</td></tr>
+                <tr><td><code>mail.skip_tls_verify</code></td><td>TLS 인증서 검증 건너뛰기</td><td><code>false</code></td><td>사내 인증서가 사설일 때만</td></tr>
+                <tr><td><code>mail.username</code> · <code>mail.password</code></td><td>SMTP 사용자 이름 · 비밀번호</td><td>빈 값</td><td>인증 없는 릴레이가 흔하므로 <strong>선택</strong>. 비밀번호는 비밀값(암호화 저장)이며 설정 API 가 되돌려주지 않음</td></tr>
+                <tr><td><code>mail.from_address</code></td><td>보내는 주소</td><td>빈 값</td><td>비우면 <code>seaton@&lt;릴레이 주소&gt;</code></td></tr>
+                <tr><td><code>mail.from_name</code></td><td>보내는 이름</td><td><code>SeatOn</code></td><td></td></tr>
+                <tr><td><code>mail.base_url</code></td><td>메일 속 링크 주소</td><td>빈 값</td><td>예 <code>https://seaton.company.intra</code>. 비우면 메일에 링크를 넣지 않음</td></tr>
+                <tr><td><code>mail.timeout_seconds</code></td><td>연결 제한 (초)</td><td><code>10</code></td><td>연결·세션 한도. 배경 발송은 2회 시도</td></tr>
+                <tr><td><code>mail.notify_seat_assigned</code></td><td>자리가 정해짐 → 그 직원</td><td><code>true</code></td><td>이벤트별 스위치</td></tr>
+                <tr><td><code>mail.notify_analysis</code></td><td>도면 분석 완료·실패 → 요청한 관리자</td><td><code>true</code></td><td></td></tr>
+                <tr><td><code>mail.notify_hr_sync</code></td><td>예약 인사 연동 실패 → 시스템 관리자 전원</td><td><code>true</code></td><td></td></tr>
+                <tr><td><code>mail.notify_api_key_expiring</code></td><td>API 키 만료 7일 전 → 키 소유자</td><td><code>true</code></td><td></td></tr>
+            </tbody>
+        </table>
         <h3>3.3 Keycloak 연결</h3>
         <figure><img src="assets/guide/admin-settings-sso.png" alt="시스템 설정 · Keycloak SSO — 사용 스위치, 콜백 URL 안내, Issuer URL·Client ID·Client Secret·Scopes·그룹 이름, 저장 후 연결 테스트" loading="lazy"><figcaption>시스템 설정 · Keycloak SSO — 사용 스위치, 콜백 URL 안내, Issuer URL·Client ID·Client Secret·Scopes·그룹 이름, 저장 후 연결 테스트</figcaption></figure>
         <ol>
@@ -250,6 +270,24 @@ curl -s http://127.0.0.1:8080/api/v1/version</code></pre>
         data-environment="prd" data-contract-version="1" data-endpoint="/momento"&gt;&lt;/script&gt;</code></pre>
         <p>프록시를 지날 때 SeatOn은 브라우저의 세션 쿠키와 <code>Authorization</code>을 벗기고 수집기의 <code>Set-Cookie</code>·정책 헤더를 돌려주지 않으며, 원래 방문자 주소를 <code>X-Forwarded-For</code>로 넘깁니다. Momento 쪽에서는 (1) 사이트의 <strong>허용 도메인</strong>에 SeatOn 주소를 등록하고 (2) 방문자 IP를 그대로 쓰려면 SeatOn 컨테이너의 주소를 <code>security.trusted_proxy_cidrs</code>에 넣습니다. 프록시를 끄면 브라우저가 수집기에 직접 연결하며, 이때는 수집기 출처가 <code>script-src</code>·<code>connect-src</code>·<code>img-src</code>에 자동으로 더해집니다. <code>/momento/*</code>는 추적이 Momento·프록시 구성으로 켜져 있을 때만 열리고 그 밖에는 <code>404</code>이며, 수집기에 닿지 못하면 <code>502 tracking_upstream</code>과 로그 <code>Momento 수집기에 연결하지 못했습니다</code>가 남습니다.</p>
         <p><strong>GA4 · GTM · Matomo · 직접 붙여넣기.</strong> 각각 ID 또는 주소만 넣으면 표준 로더를 SeatOn이 만듭니다. 직접 붙여넣기는 8KB까지이며 안에 적힌 주소가 자동으로 정책에 들어갑니다. 문자열을 이어 붙여 만든 주소처럼 읽히지 않는 출처가 있으면 차단 기록에 나타나므로 거기서 허용에 더하십시오. 폐쇄망에서 외부 도구는 브라우저가 밖으로 나갈 수 있을 때만 의미가 있습니다.</p>
+        <h3>3.7 메일 알림</h3>
+        <figure><img src="assets/guide/admin-settings-mail.png" alt="시스템 설정 · 메일 알림 — 사용·인증서 검증 스위치, 보안 협상, 릴레이 주소·포트·보내는 사람·인증·링크 주소, 이벤트 네 가지 스위치, 시험 발송 칸, 발송 기록 표(보냄·실패와 이유)" loading="lazy"><figcaption>시스템 설정 · 메일 알림 — 사용·인증서 검증 스위치, 보안 협상, 릴레이 주소·포트·보내는 사람·인증·링크 주소, 이벤트 네 가지 스위치, 시험 발송 칸, 발송 기록 표(보냄·실패와 이유)</figcaption></figure>
+        <p><strong>시스템 설정 → 메일 알림</strong> 탭에서 사내 SMTP 릴레이로 이벤트 알림을 보내게 합니다. 기본값은 꺼짐이며, 켜지 않은 설치는 메일이 한 통도 나가지 않습니다. 사내 릴레이는 대개 <strong>25번 포트 · 인증 없음 · TLS 없음</strong>이라 릴레이 주소만 넣고 켜면 되고, 인증과 암호화는 릴레이가 요구할 때만 채웁니다(<code>auto</code> 는 서버가 STARTTLS 를 알리면 쓰고 아니면 평문으로 갑니다). 폐쇄망이면 릴레이 주소로 사내 메일 서비스 <strong>postra</strong> 를 가리키면 알림이 밖으로 나가지 않습니다.</p>
+        <p><strong>보내는 이벤트.</strong> SeatOn 에서 사람이 실제로 기다리는 일만 골랐습니다 — 이 메일이 오지 않으면 누군가 손해를 보거나 화면을 계속 새로고침하는 것들입니다. 단순한 "무언가 바뀜" 은 보내지 않습니다.</p>
+        <table>
+            <thead><tr><th>이벤트</th><th>받는 사람</th><th>언제</th><th>왜</th></tr></thead>
+            <tbody>
+                <tr><td><code>seat.assigned</code> 자리가 정해짐</td><td>그 직원(직원 명부의 메일 주소)</td><td>배정·이동·일괄 등록·MCP <code>assign_seat</code> 로 <strong>실제로 자리가 바뀌었을 때</strong></td><td>이사 날 자기 자리를 몰라 좌석맵을 새로고침하거나 관리자에게 묻는 일이 사라짐. 같은 자리에 다시 배정한 것은 바뀐 게 아니라 보내지 않고, 일괄 등록에서 한 직원이 여러 번 나오면 마지막 자리로 한 통</td></tr>
+                <tr><td><code>analysis.finished</code> 도면 분석 완료·실패</td><td>분석을 요청한 관리자</td><td>분석 잡이 <code>completed</code> 또는 <code>failed</code> 로 끝났을 때(제한 시간·패닉으로 끝난 것 포함)</td><td>비전 모델 판독은 몇 분씩 걸려 화면을 떠나기 마련이고, 실패로 멈춘 것은 더더욱 알아야 함</td></tr>
+                <tr><td><code>hr_sync.failed</code> 예약 인사 연동 실패</td><td>활성 시스템 관리자 전원</td><td><code>hr.schedule</code> 로 돈 동기화가 실패했을 때</td><td>새벽에 조용히 실패하면 명부가 낡은 채 며칠이 감. 화면에서 직접 누른 <strong>저장 후 지금 동기화</strong>는 결과가 그 자리에 보이므로 보내지 않음</td></tr>
+                <tr><td><code>api_key.expiring</code> API 키 만료 임박</td><td>키 소유자</td><td>만료 7일 안으로 들어온 개인 키를 30분마다 확인해 <strong>사람마다 한 통</strong>, 키마다 한 번</td><td>만료되면 그 키를 쓰는 연동이 멈춤. <code>api_keys.expiry_notified_at</code> 로 표시해 같은 키에 다시 보내지 않으며, 메일이 꺼져 있는 동안은 표시하지 않아 켠 뒤 첫 회차에 나감</td></tr>
+            </tbody>
+        </table>
+        <p>받는 사람의 주소는 <strong>새 명부를 만들지 않고</strong> 계정(<code>users.email</code>, 없으면 연결된 직원의 주소)과 직원(<code>employees.email</code>) 표에서 그때 읽습니다. 주소가 없는 사람은 조용히 건너뜁니다. <strong>자기가 한 일은 자기에게 보내지 않습니다</strong> — 관리자가 자기 직원 레코드에 자리를 배정하면 계정과 직원 레코드의 id 가 달라도 주소가 같으므로 빠집니다. 비활성 계정과 퇴직 직원에게는 보내지 않습니다.</p>
+        <p><strong>요청을 막지 않습니다.</strong> 알림은 요청이 끝난 뒤 배경에서 나가며 릴레이가 느리거나 죽어 있어도 좌석 배정은 평소처럼 <code>204</code> 로 끝납니다. 배경 발송은 2초 뒤 한 번 더 시도하고 실패하면 로그 <code>알림 메일 발송 실패</code> 를 남깁니다. 시험 발송만 결과를 기다려 그 자리에서 보여 줍니다.</p>
+        <p><strong>시험 발송.</strong> 같은 탭 아래의 <strong>저장 후 시험 발송</strong>(<code>POST /api/v1/settings/mail/test</code>, <code>{"recipient": "..."}</code>, 비우면 내 계정 주소)은 저장한 설정으로 실제 한 통을 보내고 결과를 바로 보여 줍니다. 알림과 같은 길을 지나므로 여기서 되면 알림도 됩니다. 릴레이에 닿지 못하면 <code>502 mail_send_failed</code> 와 이유(<code>SMTP 연결 실패: …</code>, <code>RCPT TO 실패: …</code>, <code>STARTTLS 실패: …</code>, <code>SMTP 인증 실패: …</code>), 꺼져 있거나 설정이 모자라면 <code>400 mail_config_invalid</code> 입니다.</p>
+        <p><strong>발송 기록.</strong> 시도마다 <code>mail_deliveries</code> 에 남습니다 — 언제, 어떤 이벤트로, 누구에게, 제목이 무엇이었고, 되었는지(<code>queued</code> → <code>sent</code> / <code>failed</code>, 시도 횟수, 실패 이유). 같은 탭의 <strong>발송 기록</strong> 표(<code>GET /api/v1/settings/mail/deliveries?status=&amp;limit=</code>, 최근 50건과 상태별 건수)에서 봅니다. <strong>본문은 기록하지 않습니다.</strong> "안 왔다" 는 문의에는 여기서 그 사람 주소로 나간 기록과 실패 이유를 찾아 답합니다.</p>
+        <p><strong>비밀번호.</strong> <code>mail.password</code> 는 비밀값이라 설정 API 가 <code><strong>*</strong>***</code> 와 <code>configured</code> 만 돌려주고, 바꿀 때만 새 값을 받으며, 로그 어디에도 적지 않습니다.</p>
         <h2>4. 계정과 권한</h2>
         <table>
             <thead><tr><th>역할</th><th>값</th><th>할 수 있는 일</th></tr></thead>
@@ -304,9 +342,10 @@ docker compose up -d &amp;&amp; curl -s http://127.0.0.1:8080/readyz</code></pre
         <table>
             <thead><tr><th>작업</th><th>주기</th><th>하는 일</th></tr></thead>
             <tbody>
-                <tr><td>정리</td><td>30분</td><td>만료된 세션·OIDC state 삭제, 재시작으로 끊긴 분석 잡 정리</td></tr>
-                <tr><td>스케줄러</td><td>1분</td><td><code>hr.sync_enabled</code>가 <code>true</code>이고 <code>hr.schedule</code>이 되면 인사 동기화 실행</td></tr>
-                <tr><td>기동 직후</td><td>1회</td><td><code>analyzing</code> 상태에 갇힌 도면 복구(로그 <code>중단된 분석 잡을 정리했습니다</code>)</td></tr>
+                <tr><td>정리</td><td>30분</td><td>만료된 세션·OIDC state 삭제, 재시작으로 끊긴 분석 잡 정리, 만료 7일 전 API 키 소유자에게 메일(§3.7, 메일이 켜져 있을 때만)</td></tr>
+                <tr><td>스케줄러</td><td>1분</td><td><code>hr.sync_enabled</code>가 <code>true</code>이고 <code>hr.schedule</code>이 되면 인사 동기화 실행. 실패하면 관리자에게 메일</td></tr>
+                <tr><td>기동 직후</td><td>1회</td><td><code>analyzing</code> 상태에 갇힌 도면 복구(로그 <code>중단된 분석 잡을 정리했습니다</code>), 만료 임박 키 확인</td></tr>
+                <tr><td>메일 발송</td><td>이벤트마다</td><td>요청과 분리된 고루틴에서 릴레이에 보냄. 실패 시 2초 뒤 1회 재시도 후 <code>mail_deliveries</code> 에 <code>failed</code></td></tr>
             </tbody>
         </table>
         <h3>5.6 업그레이드와 되돌리기</h3>
@@ -345,6 +384,8 @@ docker compose up -d</code></pre>
                 <tr><td>추적을 켰는데 수집이 안 됨, 콘솔에 <code>Refused to load/connect … Content Security Policy</code></td><td>시스템 설정 → 방문 추적의 <strong>정책이 차단한 출처</strong></td><td>막힌 출처를 <strong>허용에 추가</strong>. 표가 비어 있으면 화면을 새로 고쳐 문서를 다시 받았는지, <code>tracking.enabled</code>가 저장됐는지 확인(§3.6)</td></tr>
                 <tr><td><code>/momento/tracker.js</code>가 <code>404</code></td><td><code>tracking.provider=momento</code>, <code>tracking.momento_proxy=true</code>, <code>tracking.enabled=true</code> 인지</td><td>셋 중 하나라도 아니면 프록시 경로는 없음</td></tr>
                 <tr><td><code>/momento/*</code>가 <code>502 tracking_upstream</code>, 로그 <code>Momento 수집기에 연결하지 못했습니다</code></td><td>컨테이너에서 <code>tracking.momento_url</code>로 나가는 연결, 사내 CA</td><td>수집기 주소·방화벽 확인</td></tr>
+                <tr><td>메일이 안 옴, 시험 발송이 <code>502 mail_send_failed</code></td><td>이유 문구: <code>SMTP 연결 실패</code>(주소·포트·방화벽), <code>STARTTLS 실패</code>/<code>x509</code>(사설 인증서 → <code>mail.skip_tls_verify</code> 또는 <code>mail.security=none</code>), <code>SMTP 인증 실패</code>(자격 증명, 또는 인증 없는 릴레이면 사용자 이름을 비움), <code>RCPT TO 실패</code>(릴레이가 그 주소나 SeatOn 컨테이너의 중계를 거부)</td><td>시스템 설정 → 메일 알림의 <strong>발송 기록</strong>과 로그 <code>알림 메일 발송 실패</code>. 릴레이 쪽에서는 SeatOn 컨테이너 주소의 중계 허용 여부</td></tr>
+                <tr><td>켰는데 아무것도 안 나가고 기록도 없음</td><td>로그 <code>메일 설정이 모자라 알림을 보내지 않았습니다</code>(호스트 없음 등), 그 이벤트의 <code>mail.notify_*</code> 스위치, 받는 사람의 계정·직원 레코드에 메일 주소가 있는지</td><td>설정 보완. 자기가 한 일은 자기에게 오지 않는 것이 정상</td></tr>
             </tbody>
         </table>
         <h2>7. 보안</h2>
@@ -357,7 +398,8 @@ docker compose up -d</code></pre>
             <li><strong>비밀값 저장</strong>: 설정의 비밀값은 <code>master.key</code>로 AES-256-GCM 암호화, 세션 토큰과 API 키는 HMAC 해시만 저장. <code>master.key</code>는 백업 대상이자 유출 금지 대상입니다.</li>
             <li><strong>인증 연동</strong>: Keycloak Authorization Code + PKCE(S256) + nonce 검증. SSO를 검증한 뒤 <code>auth.local_enabled</code>를 끄면 부트스트랩 계정도 화면에서는 못 들어오므로, 비상시 되돌리는 SQL(§6)을 운영 문서에 적어 둡니다.</li>
             <li><strong>API 키 정책</strong>: 기본 유효기간 90일, 회전 유예 24시간. 유출이 의심되면 소유자가 <strong>폐기</strong>하거나, 관리자가 그 사용자를 비활성화합니다(비활성 사용자의 키는 즉시 거부).</li>
-            <li><strong>인터넷 통신</strong>: 기본 설정(<code>ai.engine=cv</code>, SSO·인사 연동·방문 추적 꺼짐)에서는 컨테이너가 밖으로 나가는 연결이 없습니다. 연결이 생기는 곳은 Keycloak Issuer, <code>hr.api_url</code>, <code>ai.vlm_base_url</code>, 그리고 Momento 프록시를 켰을 때의 <code>tracking.momento_url</code> 네 군데뿐이며 모두 사내 주소를 씁니다.</li>
+            <li><strong>메일 알림</strong>: <code>mail.password</code> 는 되읽히지 않고 로그에도 남지 않습니다. 발송 기록에는 제목과 수신자만 있고 본문이 없어 기록 자체가 유출 경로가 되지 않습니다. 릴레이는 사내 주소(<code>postra</code> 권장)만 가리키고, <code>mail.skip_tls_verify</code> 는 사설 인증서일 때만 켭니다.</li>
+            <li><strong>인터넷 통신</strong>: 기본 설정(<code>ai.engine=cv</code>, SSO·인사 연동·방문 추적·메일 알림 꺼짐)에서는 컨테이너가 밖으로 나가는 연결이 없습니다. 연결이 생기는 곳은 Keycloak Issuer, <code>hr.api_url</code>, <code>ai.vlm_base_url</code>, Momento 프록시를 켰을 때의 <code>tracking.momento_url</code>, 그리고 메일을 켰을 때의 <code>mail.smtp_host</code> 다섯 군데뿐이며 모두 사내 주소를 씁니다.</li>
         </ul>
         <h2>8. 좌석 인식 엔진 (CV · VLM · 하이브리드)</h2>
         <p><code>시스템 설정 → AI 분석</code>에서 도면 판독 엔진을 선택합니다. 세 방식 모두 결과를 동일한 비율 좌표 좌석으로 저장하므로 이후 편집·배정 흐름은 같습니다.</p>

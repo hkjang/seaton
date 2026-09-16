@@ -315,6 +315,9 @@ func (s *Server) analysisJobStatus(w http.ResponseWriter, r *http.Request) {
 // runAnalysis는 요청과 분리된 컨텍스트에서 실제 분석을 수행한다. VLM 호출은
 // 수십 초가 걸릴 수 있어 HTTP 응답을 붙잡아 둘 수 없기 때문이다.
 func (s *Server) runAnalysis(ctx context.Context, jobID, mapID, engine string, threshold, autoThreshold float64, actorID string) {
+	// 가장 먼저 걸어 가장 나중에 돈다 — 패닉 복구가 실패로 기록한 뒤의 최종
+	// 상태를 읽어야 한다. 제한 시간에 걸려 끝난 잡도 알려야 하므로 취소는 끊는다.
+	defer s.notifyAnalysisFinished(context.WithoutCancel(ctx), jobID, mapID, actorID)
 	defer s.analyses.release(mapID)
 	defer func() {
 		if v := recover(); v != nil {

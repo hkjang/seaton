@@ -17,6 +17,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/hkjang/seaton/internal/mail"
 	"github.com/hkjang/seaton/internal/platform"
 	"github.com/hkjang/seaton/internal/tracking"
 	"github.com/jackc/pgx/v5"
@@ -38,11 +39,17 @@ type Server struct {
 	// trackingConfig 는 현재 추적 설정을 읽는다. 기본은 settings 테이블이고,
 	// 테스트는 데이터베이스 없이 고정 설정을 넣는다.
 	trackingConfig func(context.Context) tracking.Config
+	// mail 은 이벤트 알림을 사내 SMTP 릴레이로 보낸다. 데이터베이스 없이 만든
+	// 서버(테스트)는 비워 두고, 테스트가 가짜 전송을 넣는다.
+	mail *mail.Service
 }
 
 func NewServer(db *pgxpool.Pool, keys *platform.Keyring, logger *slog.Logger, webFS fs.FS, version, commit, builtAt string) *Server {
 	s := &Server{db: db, keys: keys, logger: logger, webFS: webFS, version: version, commit: commit, builtAt: builtAt, violations: tracking.NewRecorder()}
 	s.trackingConfig = s.loadTracking
+	if db != nil {
+		s.mail = mail.NewService(mailStore{db: db}, s.loadMailValues, mailDirectory{db: db}, newID, logger)
+	}
 	return s
 }
 
@@ -117,6 +124,8 @@ func (s *Server) Routes() http.Handler {
 				r.Post("/settings/ai/vlm/test", s.testVLM)
 				r.Get("/settings/tracking/violations", s.listTrackingViolations)
 				r.Delete("/settings/tracking/violations", s.forgetTrackingViolations)
+				r.Get("/settings/mail/deliveries", s.listMailDeliveries)
+				r.Post("/settings/mail/test", s.sendTestMail)
 				r.Get("/users", s.listUsers)
 				r.Patch("/users/{userID}", s.updateUser)
 			})
@@ -239,6 +248,9 @@ func scanUser(row pgx.Row) (User, error) {
 }
 
 func (s *Server) audit(ctx context.Context, userID, action, resourceType, resourceID, ip string, details any) {
+	if s.db == nil {
+		return
+	}
 	b, _ := json.Marshal(details)
 	_, err := s.db.Exec(ctx, `INSERT INTO audit_logs(actor_user_id, action, resource_type, resource_id, ip_address, details) VALUES(NULLIF($1,''),$2,$3,NULLIF($4,''),$5,$6)`, userID, action, resourceType, resourceID, ip, b)
 	if err != nil {

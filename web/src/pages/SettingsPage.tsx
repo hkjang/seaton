@@ -31,8 +31,21 @@ import LinkRounded from "@mui/icons-material/LinkRounded";
 import CheckCircleRounded from "@mui/icons-material/CheckCircleRounded";
 import WarningAmberRounded from "@mui/icons-material/WarningAmberRounded";
 import RefreshRounded from "@mui/icons-material/RefreshRounded";
+import SendRounded from "@mui/icons-material/SendRounded";
 import { api, postJSON, putJSON } from "../api";
+import { useAuth } from "../auth";
 import { PageHeader } from "../components/AdminUI";
+import {
+  DELIVERY_STATUS,
+  MAIL_EVENTS,
+  MAIL_FIELDS,
+  MAIL_SECURITY_OPTIONS,
+  type DeliveryStatus,
+  eventLabel,
+  mailActive,
+  mailMissing,
+  validRecipient,
+} from "../lib/mail";
 import {
   MAX_SNIPPET_BYTES,
   TRACKING_PROVIDERS,
@@ -48,6 +61,21 @@ type Setting = {
   value: string;
   secret: boolean;
   configured: boolean;
+};
+type Delivery = {
+  id: string;
+  event: string;
+  recipient: string;
+  subject: string;
+  status: DeliveryStatus;
+  attempts: number;
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+type DeliveryPage = {
+  items: Delivery[];
+  summary: { total: number; status: Record<string, number> };
 };
 type Violation = {
   origin: string;
@@ -171,8 +199,10 @@ const fields: Record<
   ],
   // 방문 추적 칸은 provider 에 따라 달라서 trackingFields() 가 정한다.
   tracking: [],
+  mail: MAIL_FIELDS,
 };
 export function SettingsPage() {
+  const { user } = useAuth();
   const [items, setItems] = useState<Setting[]>([]),
     [values, setValues] = useState<Record<string, string>>({}),
     [tab, setTab] = useState("general"),
@@ -184,6 +214,10 @@ export function SettingsPage() {
     [loading, setLoading] = useState(true),
     [violations, setViolations] = useState<Violation[]>([]),
     [violationsError, setViolationsError] = useState(""),
+    [deliveries, setDeliveries] = useState<DeliveryPage | null>(null),
+    [deliveriesError, setDeliveriesError] = useState(""),
+    [testRecipient, setTestRecipient] = useState(""),
+    [sendingTest, setSendingTest] = useState(false),
     [newPassword, setNewPassword] = useState("");
 
   const load = async () => {
@@ -207,6 +241,8 @@ export function SettingsPage() {
   const engine = values["ai.engine"] || "cv";
   const trackingProvider = values["tracking.provider"] || "momento";
   const trackingOn = trackingActive(values);
+  const mailOn = mailActive(values);
+  const mailReason = mailMissing(values);
   const tabFields =
     tab === "tracking" ? trackingFields(trackingProvider) : fields[tab];
   const dirty = useMemo(
@@ -339,6 +375,47 @@ export function SettingsPage() {
       setSaving(false);
     }
   };
+  // 발송 기록. 관리자가 무엇이 건물 밖으로 나갔는지 볼 수 있어야 한다.
+  const loadDeliveries = async () => {
+    try {
+      const data = await api<DeliveryPage>(
+        "/api/v1/settings/mail/deliveries?limit=50",
+      );
+      setDeliveries(data);
+      setDeliveriesError("");
+    } catch (e) {
+      setDeliveriesError(
+        e instanceof Error ? e.message : "발송 기록을 불러오지 못했습니다",
+      );
+    }
+  };
+  useEffect(() => {
+    if (tab === "mail") void loadDeliveries();
+  }, [tab]);
+  // 시험 발송은 저장한 설정으로 실제 한 통을 보내고 결과를 그 자리에서 보여 준다.
+  // 릴레이 설정은 한 번에 맞는 일이 드물다.
+  const sendTestMail = async () => {
+    setSendingTest(true);
+    try {
+      if (!(await save())) return;
+      const result = await postJSON<{ sent: boolean; recipient: string }>(
+        "/api/v1/settings/mail/test",
+        { recipient: testRecipient.trim() },
+      );
+      setMessage(
+        `${result.recipient} 로 시험 메일을 보냈습니다. 받은 편지함(스팸함 포함)을 확인하세요.`,
+      );
+    } catch (e) {
+      setError(
+        e instanceof Error
+          ? `시험 메일을 보내지 못했습니다 · ${e.message}`
+          : "시험 메일을 보내지 못했습니다",
+      );
+    } finally {
+      setSendingTest(false);
+      await loadDeliveries();
+    }
+  };
   const changePassword = async () => {
     try {
       await postJSON("/api/v1/auth/password", { currentPassword, newPassword });
@@ -378,7 +455,11 @@ export function SettingsPage() {
                     ? "관리 화면(/admin, /profile)도 추적"
                     : key === "tracking.momento_proxy"
                       ? "같은 오리진 프록시(/momento) 사용"
-                      : "자동 동기화 사용"
+                      : key === "mail.enabled"
+                        ? "메일 알림 사용"
+                        : key === "mail.skip_tls_verify"
+                          ? "TLS 인증서 검증 건너뛰기 (사설 인증서일 때만)"
+                          : "자동 동기화 사용"
       }
     />
   );
@@ -469,6 +550,12 @@ export function SettingsPage() {
               variant="outlined"
               label={`방문 추적 ${trackingOn ? "활성" : "비활성"}`}
             />
+            <Chip
+              size="small"
+              color={mailOn ? "success" : "default"}
+              variant="outlined"
+              label={`메일 알림 ${mailOn ? "활성" : "비활성"}`}
+            />
           </Stack>
           <Tabs
             value={tab}
@@ -482,6 +569,7 @@ export function SettingsPage() {
             <Tab value="ai" label="AI 분석" />
             <Tab value="hr" label="인사 연동" />
             <Tab value="tracking" label="방문 추적" />
+            <Tab value="mail" label="메일 알림" />
           </Tabs>
           <CardContent sx={{ p: { xs: 2, md: 4 } }}>
             {tab === "oidc" && (
@@ -525,6 +613,39 @@ export function SettingsPage() {
                     <MenuItem value="hybrid">
                       하이브리드 · CV + VLM 교차 검증
                     </MenuItem>
+                  </Select>
+                </FormControl>
+              </Box>
+            )}
+            {tab === "mail" && (
+              <Box mb={3}>
+                <Stack
+                  direction={{ xs: "column", sm: "row" }}
+                  spacing={2}
+                  mb={2}
+                  flexWrap="wrap"
+                >
+                  {switchValue("mail.enabled")}
+                  {switchValue("mail.skip_tls_verify")}
+                </Stack>
+                <FormControl sx={{ minWidth: 320 }}>
+                  <InputLabel id="mail-security-label">보안 협상</InputLabel>
+                  <Select
+                    labelId="mail-security-label"
+                    label="보안 협상"
+                    value={values["mail.security"] || "auto"}
+                    onChange={(e) =>
+                      setValues((v) => ({
+                        ...v,
+                        "mail.security": e.target.value,
+                      }))
+                    }
+                  >
+                    {MAIL_SECURITY_OPTIONS.map((option) => (
+                      <MenuItem key={option.value} value={option.value}>
+                        {option.label}
+                      </MenuItem>
+                    ))}
                   </Select>
                 </FormControl>
               </Box>
@@ -736,6 +857,185 @@ export function SettingsPage() {
                                 >
                                   허용에 추가
                                 </Button>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </Box>
+              </>
+            )}
+            {tab === "mail" && (
+              <>
+                <Alert severity={mailOn ? "success" : "info"} sx={{ mt: 2 }}>
+                  {mailOn
+                    ? "켜져 있습니다. 알림은 배경에서 나가며 릴레이가 멎어 있어도 화면의 작업은 평소처럼 끝납니다. 비밀번호는 저장 뒤 되읽히지 않습니다."
+                    : mailReason ||
+                      "기본은 꺼짐입니다. 사내 릴레이는 대개 25번 포트·인증 없음·TLS 없음이므로 주소만 넣고 켜면 됩니다. 폐쇄망이면 사내 메일 서비스(postra)를 릴레이로 가리키세요."}
+                </Alert>
+                <Box sx={{ mt: 3 }}>
+                  <Typography variant="h6">보낼 이벤트</Typography>
+                  <Typography
+                    variant="body2"
+                    color="text.secondary"
+                    sx={{ mb: 1 }}
+                  >
+                    사람이 실제로 기다리는 일만 보냅니다. 자기가 한 일은
+                    자기에게 보내지 않고, 한 작업이 여러 알림을 만들면 한 통에
+                    묶습니다.
+                  </Typography>
+                  <Stack spacing={0.5}>
+                    {MAIL_EVENTS.map((event) => (
+                      <Box key={event.key}>
+                        <FormControlLabel
+                          control={
+                            <Switch
+                              checked={values[event.key] !== "false"}
+                              onChange={(e) =>
+                                setValues((v) => ({
+                                  ...v,
+                                  [event.key]: String(e.target.checked),
+                                }))
+                              }
+                            />
+                          }
+                          label={event.label}
+                        />
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          display="block"
+                          sx={{ ml: 6, mt: -0.5 }}
+                        >
+                          {event.help}
+                        </Typography>
+                      </Box>
+                    ))}
+                  </Stack>
+                </Box>
+                <Box sx={{ mt: 3 }}>
+                  <Typography variant="h6">시험 발송</Typography>
+                  <Typography
+                    variant="body2"
+                    color="text.secondary"
+                    sx={{ mb: 1.5 }}
+                  >
+                    저장한 설정으로 실제 한 통을 보내고 결과를 여기서 보여
+                    줍니다. 알림과 같은 길을 지나므로 여기서 되면 알림도 됩니다.
+                  </Typography>
+                  <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+                    <TextField
+                      label="받는 사람"
+                      placeholder={user?.email || "name@company.intra"}
+                      value={testRecipient}
+                      onChange={(e) => setTestRecipient(e.target.value)}
+                      helperText={
+                        testRecipient.trim() === ""
+                          ? user?.email
+                            ? `비우면 내 주소(${user.email})로 보냅니다`
+                            : "내 계정에 메일 주소가 없어 받는 사람을 적어야 합니다"
+                          : validRecipient(testRecipient)
+                            ? " "
+                            : "메일 주소 하나를 적으세요"
+                      }
+                      error={
+                        testRecipient.trim() !== "" &&
+                        !validRecipient(testRecipient)
+                      }
+                      sx={{ minWidth: 320 }}
+                    />
+                    <Button
+                      variant="outlined"
+                      startIcon={<SendRounded />}
+                      disabled={
+                        sendingTest ||
+                        saving ||
+                        values["mail.enabled"] !== "true" ||
+                        (testRecipient.trim() === "" && !user?.email) ||
+                        (testRecipient.trim() !== "" &&
+                          !validRecipient(testRecipient))
+                      }
+                      onClick={() => void sendTestMail()}
+                      sx={{ alignSelf: "flex-start", mt: 1 }}
+                    >
+                      {sendingTest ? "보내는 중…" : "저장 후 시험 발송"}
+                    </Button>
+                  </Stack>
+                </Box>
+                <Box sx={{ mt: 3 }}>
+                  <Stack
+                    direction="row"
+                    justifyContent="space-between"
+                    alignItems="center"
+                    mb={1}
+                  >
+                    <Box>
+                      <Typography variant="h6">발송 기록</Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        시도마다 남깁니다. 본문은 담지 않습니다.
+                        {deliveries &&
+                          ` 전체 ${deliveries.summary.total}건 · 보냄 ${deliveries.summary.status.sent ?? 0} · 실패 ${deliveries.summary.status.failed ?? 0}`}
+                      </Typography>
+                    </Box>
+                    <Button
+                      size="small"
+                      startIcon={<RefreshRounded />}
+                      onClick={() => void loadDeliveries()}
+                    >
+                      새로 고침
+                    </Button>
+                  </Stack>
+                  {deliveriesError && (
+                    <Alert severity="warning" sx={{ mb: 1 }}>
+                      {deliveriesError}
+                    </Alert>
+                  )}
+                  {!deliveries || deliveries.items.length === 0 ? (
+                    <Typography variant="body2" color="text.secondary">
+                      아직 보낸 메일이 없습니다.
+                    </Typography>
+                  ) : (
+                    <Table size="small" aria-label="메일 발송 기록">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>시각</TableCell>
+                          <TableCell>이벤트</TableCell>
+                          <TableCell>받는 사람</TableCell>
+                          <TableCell>제목</TableCell>
+                          <TableCell>결과</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {deliveries.items.map((d) => (
+                          <TableRow key={d.id}>
+                            <TableCell sx={{ whiteSpace: "nowrap" }}>
+                              {new Date(d.createdAt).toLocaleString("ko-KR")}
+                            </TableCell>
+                            <TableCell>{eventLabel(d.event)}</TableCell>
+                            <TableCell sx={{ fontFamily: "monospace" }}>
+                              {d.recipient}
+                            </TableCell>
+                            <TableCell>{d.subject}</TableCell>
+                            <TableCell>
+                              <Chip
+                                size="small"
+                                variant="outlined"
+                                color={DELIVERY_STATUS[d.status]?.color}
+                                label={
+                                  DELIVERY_STATUS[d.status]?.label ?? d.status
+                                }
+                                title={d.errorMessage}
+                              />
+                              {d.errorMessage && (
+                                <Typography
+                                  variant="caption"
+                                  color="error"
+                                  display="block"
+                                >
+                                  {d.errorMessage}
+                                </Typography>
                               )}
                             </TableCell>
                           </TableRow>

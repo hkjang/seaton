@@ -187,10 +187,14 @@ func (s *Server) executeMCPTool(r *http.Request, name string, args map[string]an
 		if !exists {
 			return nil, errMCP("seat_id에 해당하는 좌석이 없습니다")
 		}
-		if err := s.performAssignment(r.Context(), u, emp, seat, reason, "mcp"); err != nil {
+		changed, err := s.performAssignment(r.Context(), u, emp, seat, reason, "mcp")
+		if err != nil {
 			return nil, errMCP(assignmentFailure(err))
 		}
 		s.audit(r.Context(), u.ID, "assignment.create", "seat", seat, r.RemoteAddr, map[string]string{"source": "mcp", "employeeId": emp})
+		if changed {
+			s.notifySeatAssigned(r.Context(), u.ID, emp, seat, reason)
+		}
 		return map[string]any{"applied": true, "employeeId": emp, "seatId": seat}, nil
 	default:
 		return nil, errMCP("알 수 없는 도구입니다: " + name)

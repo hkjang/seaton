@@ -216,6 +216,26 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 );
 CREATE INDEX IF NOT EXISTS audit_logs_created_idx ON audit_logs(created_at DESC);
 
+-- 만료 임박 안내를 보낸 시각. 한 번 보낸 키에 30분마다 다시 보내지 않기 위한 표시다.
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS expiry_notified_at timestamptz;
+
+-- 메일 알림 발송 기록. 시도마다 남기되 본문은 담지 않는다 — 제목과 수신자면
+-- "안 왔다" 는 문의에 답하기에 충분하고, 본문까지 담으면 기록이 유출 경로가 된다.
+CREATE TABLE IF NOT EXISTS mail_deliveries (
+  id text PRIMARY KEY,
+  event text NOT NULL,
+  recipient text NOT NULL,
+  subject text NOT NULL,
+  reference text,
+  actor_id text,
+  status text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','sent','failed')),
+  attempts integer NOT NULL DEFAULT 0,
+  error_message text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS mail_deliveries_created_idx ON mail_deliveries(created_at DESC);
+
 CREATE TABLE IF NOT EXISTS employee_sync_runs (
   id text PRIMARY KEY,
   status text NOT NULL,
@@ -270,7 +290,22 @@ INSERT INTO settings(key, value, secret) VALUES
  ('tracking.custom_snippet', '', false),
  ('tracking.allowed_hosts', '', false),
  ('tracking.include_admin', 'false', false),
- ('tracking.placement', 'head', false)
+ ('tracking.placement', 'head', false),
+ ('mail.enabled', 'false', false),
+ ('mail.smtp_host', '', false),
+ ('mail.smtp_port', '25', false),
+ ('mail.security', 'auto', false),
+ ('mail.skip_tls_verify', 'false', false),
+ ('mail.username', '', false),
+ ('mail.password', '', true),
+ ('mail.from_address', '', false),
+ ('mail.from_name', 'SeatOn', false),
+ ('mail.base_url', '', false),
+ ('mail.timeout_seconds', '10', false),
+ ('mail.notify_seat_assigned', 'true', false),
+ ('mail.notify_analysis', 'true', false),
+ ('mail.notify_hr_sync', 'true', false),
+ ('mail.notify_api_key_expiring', 'true', false)
 ON CONFLICT (key) DO NOTHING;
 
 INSERT INTO schema_migrations(version) VALUES (1) ON CONFLICT DO NOTHING;

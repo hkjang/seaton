@@ -34,6 +34,8 @@ OpenAPI 3.1 문서는 실행 중인 SeatOn의 `/api/v1/openapi.json`에서 확�
 - `POST /api/v1/settings/ai/vlm/test` 사내 VLM 엔드포인트 연결·응답 형식 시험
 - `GET /api/v1/settings/tracking/violations` 방문 추적 CSP가 차단한 출처 목록(시스템 관리자). `DELETE`는 기록 비우기
 - `POST /api/v1/tracking/csp-report` 브라우저의 CSP 위반 신고 수신. 인증 없음, 추적이 켜진 동안만 메모리에 기록
+- `GET /api/v1/settings/mail/deliveries?status=&limit=` 메일 알림 발송 기록(시스템 관리자). 최신순, 상태별 건수 요약. 본문은 없음
+- `POST /api/v1/settings/mail/test` `{"recipient":"..."}` 저장된 SMTP 설정으로 시험 메일 한 통 발송(시스템 관리자). 비우면 내 주소. 릴레이 실패는 `502 mail_send_failed`, 꺼짐·설정 부족은 `400 mail_config_invalid`
 - `GET /momento/tracker.js` · `POST /momento/collect/v1/events` Momento 같은 오리진 프록시. 추적이 Momento·프록시 구성일 때만 열리고 그 밖에는 `404`
 - `GET /api/v1/floor-maps/{id}/preview` 좌석 오버레이 기준 래스터 이미지, PDF는 첫 페이지를 PNG로 변환해 제공
 - `PUT /api/v1/floor-maps/{id}/grid` 도면 좌석 격자 보정값 저장, 빈 본문 `{}`은 해제

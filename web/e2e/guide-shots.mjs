@@ -175,6 +175,9 @@ await shot("admin-settings-ai");
 await page.getByRole("tab", { name: "방문 추적" }).click();
 await page.getByRole("heading", { name: "정책이 차단한 출처" }).waitFor();
 await shot("admin-settings-tracking");
+await page.getByRole("tab", { name: "메일 알림" }).click();
+await page.getByRole("heading", { name: "발송 기록" }).waitFor();
+await shot("admin-settings-mail", { fullPage: true });
 
 // 내 API 키 — 만들고, 원문 화면을 찍고, 폐기한다.
 await page.goto("/profile/keys");

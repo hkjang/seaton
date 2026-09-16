@@ -275,49 +275,58 @@ func (s *Server) assignSeat(w http.ResponseWriter, r *http.Request) {
 		in.Source = "manual"
 	}
 	u, _ := userFrom(r)
-	if err := s.performAssignment(r.Context(), u, in.EmployeeID, in.SeatID, in.Reason, in.Source); err != nil {
+	changed, err := s.performAssignment(r.Context(), u, in.EmployeeID, in.SeatID, in.Reason, in.Source)
+	if err != nil {
 		writeError(w, 409, "assignment_conflict", err.Error())
 		return
 	}
 	s.audit(r.Context(), u.ID, "assignment.create", "seat", in.SeatID, r.RemoteAddr, in)
+	if changed {
+		s.notifySeatAssigned(r.Context(), u.ID, in.EmployeeID, in.SeatID, in.Reason)
+	}
 	w.WriteHeader(204)
 }
 
-func (s *Server) performAssignment(ctx context.Context, u User, employeeID, seatID, reason, source string) error {
+// performAssignment 는 배정을 반영하고, 실제로 자리가 바뀌었는지 돌려준다.
+// 같은 자리에 다시 배정한 것은 바뀐 게 아니므로 이력도 알림도 남기지 않는다.
+func (s *Server) performAssignment(ctx context.Context, u User, employeeID, seatID, reason, source string) (bool, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer tx.Rollback(ctx)
 	var previous *string
 	_ = tx.QueryRow(ctx, `SELECT seat_id FROM seat_assignments WHERE employee_id=$1 AND ended_at IS NULL FOR UPDATE`, employeeID).Scan(&previous)
 	var occupied string
 	if err := tx.QueryRow(ctx, `SELECT COALESCE((SELECT employee_id FROM seat_assignments WHERE seat_id=$1 AND ended_at IS NULL),'')`, seatID).Scan(&occupied); err != nil {
-		return err
+		return false, err
 	}
 	if occupied != "" && occupied != employeeID {
-		return fmt.Errorf("이미 다른 직원에게 배정된 좌석입니다")
+		return false, fmt.Errorf("이미 다른 직원에게 배정된 좌석입니다")
 	}
 	if previous != nil && *previous == seatID {
-		return nil
+		return false, nil
 	}
 	_, err = tx.Exec(ctx, `UPDATE seat_assignments SET ended_at=now() WHERE employee_id=$1 AND ended_at IS NULL`, employeeID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if previous != nil {
 		_, _ = tx.Exec(ctx, `UPDATE seats SET status='available',updated_at=now() WHERE id=$1 AND type<>'unavailable'`, *previous)
 	}
 	_, err = tx.Exec(ctx, `INSERT INTO seat_assignments(id,employee_id,seat_id,assigned_by,reason,source) VALUES($1,$2,$3,$4,$5,$6)`, newID(), employeeID, seatID, u.ID, reason, source)
 	if err != nil {
-		return err
+		return false, err
 	}
 	_, _ = tx.Exec(ctx, `UPDATE seats SET status='assigned',updated_at=now() WHERE id=$1`, seatID)
 	_, err = tx.Exec(ctx, `INSERT INTO seat_history(id,employee_id,previous_seat_id,new_seat_id,changed_by,reason,source) VALUES($1,$2,$3,$4,$5,$6,$7)`, newID(), employeeID, previous, seatID, u.ID, reason, source)
 	if err != nil {
-		return err
+		return false, err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *Server) unassignSeat(w http.ResponseWriter, r *http.Request) {
@@ -361,6 +370,9 @@ func (s *Server) bulkAssignments(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFrom(r)
 	success := 0
 	failures := []map[string]any{}
+	// 한 직원이 파일에 여러 번 나오면 마지막 자리만 알린다. 사람마다 한 통이다.
+	assigned := map[string]string{}
+	assignedOrder := []string{}
 	for i, row := range rows[1:] {
 		if len(row) < 2 {
 			continue
@@ -387,11 +399,21 @@ func (s *Server) bulkAssignments(w http.ResponseWriter, r *http.Request) {
 			fail("게시된 도면에서 좌석 번호를 찾을 수 없습니다")
 			continue
 		}
-		if err := s.performAssignment(r.Context(), u, empID, seatID, "일괄 등록", "bulk"); err != nil {
+		changed, err := s.performAssignment(r.Context(), u, empID, seatID, "일괄 등록", "bulk")
+		if err != nil {
 			fail(assignmentFailure(err))
 			continue
 		}
 		success++
+		if changed {
+			if _, seen := assigned[empID]; !seen {
+				assignedOrder = append(assignedOrder, empID)
+			}
+			assigned[empID] = seatID
+		}
+	}
+	for _, empID := range assignedOrder {
+		s.notifySeatAssigned(r.Context(), u.ID, empID, assigned[empID], "일괄 등록")
 	}
 	writeJSON(w, 200, map[string]any{"success": success, "failed": len(failures), "failures": failures})
 }
