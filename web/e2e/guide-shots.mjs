@@ -168,6 +168,13 @@ await page.getByRole("heading", { name: "시스템 설정" }).waitFor();
 await shot("admin-settings");
 await page.getByRole("tab", { name: "Keycloak SSO" }).click();
 await shot("admin-settings-sso");
+// MCP SSO(OAuth) 카드는 같은 탭 아래쪽에 있다 — 카드만 잘라 찍는다.
+await page.getByTestId("mcp-oauth-card").scrollIntoViewIfNeeded();
+await settle();
+await page
+  .getByTestId("mcp-oauth-card")
+  .screenshot({ path: `${outDir}admin-settings-mcp-sso.png` });
+console.log("[guide] admin-settings-mcp-sso.png");
 await page.getByRole("tab", { name: "보안 · 키" }).click();
 await shot("admin-settings-security");
 await page.getByRole("tab", { name: "AI 분석" }).click();

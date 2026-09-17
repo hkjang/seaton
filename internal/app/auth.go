@@ -114,10 +114,13 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		var u User
 		var csrf string
 		var apiScopes []string
-		apiKeyAuth := false
+		// bearerAuth 는 Authorization 헤더로 인증됐다는 뜻이다 — 개인 키든 SSO
+		// 액세스 토큰이든. 둘 다 세션 쿠키와 CSRF 검사를 지나지 않는다.
+		bearerAuth := false
 		if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
 			raw := strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))
-			if strings.HasPrefix(raw, "seat_") {
+			switch {
+			case strings.HasPrefix(raw, "seat_"):
 				var keyID string
 				var err error
 				u, err = scanUser(s.db.QueryRow(r.Context(), `SELECT u.id,u.username,u.display_name,COALESCE(u.email,''),u.employee_id,u.role,u.source,u.last_login_at,u.active
@@ -128,27 +131,40 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 					_, _ = s.db.Exec(r.Context(), `UPDATE api_keys SET last_used_at=now() WHERE id=$1`, keyID)
 				}
 				if err != nil {
-					writeError(w, http.StatusUnauthorized, "invalid_api_key", "API 키가 유효하지 않습니다")
+					s.unauthorized(w, r, "invalid_api_key", "API 키가 유효하지 않습니다")
 					return
 				}
-				apiKeyAuth = true
+				bearerAuth = true
 				if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions && r.URL.Path != "/mcp" && !containsString(apiScopes, "write") {
 					writeError(w, http.StatusForbidden, "insufficient_scope", "write 범위가 있는 API 키가 필요합니다")
 					return
 				}
+			case r.URL.Path == "/mcp" && looksLikeJWT(raw):
+				// 키가 아닌 다른 하나는 Keycloak 액세스 토큰이다 — MCP 클라이언트가
+				// OAuth 로 받아 온다(mcpoauth.go). /mcp 에서만, 켜져 있을 때만 받고,
+				// 꺼져 있으면 아래 세션 검사로 떨어져 전과 똑같이 거절된다.
+				if cfg := s.mcpOAuthConfig(r.Context()); cfg.active() {
+					var err error
+					u, apiScopes, err = s.oauthPrincipal(r.Context(), cfg, r, raw)
+					if err != nil {
+						s.refuseMCPToken(w, r, cfg, err)
+						return
+					}
+					bearerAuth = true
+				}
 			}
 		}
-		if !apiKeyAuth {
+		if !bearerAuth {
 			cookie, err := r.Cookie(sessionCookie)
 			if err != nil || cookie.Value == "" {
-				writeError(w, http.StatusUnauthorized, "authentication_required", "로그인이 필요합니다")
+				s.unauthorized(w, r, "authentication_required", "로그인이 필요합니다")
 				return
 			}
 			u, err = scanUser(s.db.QueryRow(r.Context(), `SELECT u.id,u.username,u.display_name,COALESCE(u.email,''),u.employee_id,u.role,u.source,u.last_login_at,u.active
 				FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>now() AND u.active=true`, s.keys.Digest(cookie.Value)))
 			if err != nil {
 				http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
-				writeError(w, http.StatusUnauthorized, "session_expired", "세션이 만료되었습니다")
+				s.unauthorized(w, r, "session_expired", "세션이 만료되었습니다")
 				return
 			}
 			_ = s.db.QueryRow(r.Context(), `SELECT csrf_token FROM sessions WHERE token_hash=$1`, s.keys.Digest(cookie.Value)).Scan(&csrf)

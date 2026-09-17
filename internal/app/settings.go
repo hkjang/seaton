@@ -93,6 +93,10 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_setting", err.Error())
 		return
 	}
+	if err := s.validateMCPOAuthSettings(r.Context(), tx); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_setting", err.Error())
+		return
+	}
 	if err = tx.Commit(r.Context()); err != nil {
 		notFoundOrServer(w, err)
 		return

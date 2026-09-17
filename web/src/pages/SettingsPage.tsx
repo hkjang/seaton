@@ -31,6 +31,7 @@ import LinkRounded from "@mui/icons-material/LinkRounded";
 import CheckCircleRounded from "@mui/icons-material/CheckCircleRounded";
 import WarningAmberRounded from "@mui/icons-material/WarningAmberRounded";
 import RefreshRounded from "@mui/icons-material/RefreshRounded";
+import ContentCopyRounded from "@mui/icons-material/ContentCopyRounded";
 import { api, postJSON, putJSON } from "../api";
 import { PageHeader } from "../components/AdminUI";
 import {
@@ -42,6 +43,12 @@ import {
   trackingFields,
   usesSameOriginProxy,
 } from "../lib/tracking";
+import {
+  mcpMetadataURL,
+  mcpOAuthActive,
+  mcpOAuthProblem,
+  mcpResource,
+} from "../lib/mcpOAuth";
 
 type Setting = {
   key: string;
@@ -207,6 +214,12 @@ export function SettingsPage() {
   const engine = values["ai.engine"] || "cv";
   const trackingProvider = values["tracking.provider"] || "momento";
   const trackingOn = trackingActive(values);
+  const mcpOn = mcpOAuthActive(values);
+  const mcpResourceValue = mcpResource(
+    values["mcp.oauth.resource"] ?? "",
+    window.location.origin,
+  );
+  const mcpProblem = mcpOAuthProblem(values);
   const tabFields =
     tab === "tracking" ? trackingFields(trackingProvider) : fields[tab];
   const dirty = useMemo(
@@ -372,13 +385,15 @@ export function SettingsPage() {
               ? "SSO 사용자 자동 생성"
               : key === "oidc.auto_login"
                 ? "Keycloak 세션이 있으면 자동 로그인"
-                : key === "tracking.enabled"
-                  ? "방문 추적 사용"
-                  : key === "tracking.include_admin"
-                    ? "관리 화면(/admin, /profile)도 추적"
-                    : key === "tracking.momento_proxy"
-                      ? "같은 오리진 프록시(/momento) 사용"
-                      : "자동 동기화 사용"
+                : key === "mcp.oauth.enabled"
+                  ? "MCP 를 Keycloak 액세스 토큰으로도 열기"
+                  : key === "tracking.enabled"
+                    ? "방문 추적 사용"
+                    : key === "tracking.include_admin"
+                      ? "관리 화면(/admin, /profile)도 추적"
+                      : key === "tracking.momento_proxy"
+                        ? "같은 오리진 프록시(/momento) 사용"
+                        : "자동 동기화 사용"
       }
     />
   );
@@ -637,6 +652,123 @@ export function SettingsPage() {
                 </Grid>
               )}
             </Grid>
+            {tab === "oidc" && (
+              <Box sx={{ mt: 4 }} data-testid="mcp-oauth-card">
+                <Divider sx={{ mb: 3 }} />
+                <Typography variant="h6">MCP SSO(OAuth) 인증</Typography>
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ mb: 2 }}
+                >
+                  켜면 MCP 클라이언트(Claude, Cursor 등)에 개인 키 없이 MCP 주소
+                  하나만 주면 됩니다. 클라이언트가 아래 메타데이터를 읽어
+                  Keycloak 에서 스스로 로그인하고, 이 서버는 받은 액세스 토큰의
+                  서명·발급자·만료·대상을 요청마다 검사합니다. 계정은 만들지
+                  않으며 웹으로 한 번 로그인한 활성 SSO 사용자만 통과합니다.
+                  REST API 는 지금처럼 키와 세션만 받습니다.
+                </Typography>
+                <Box mb={2}>{switchValue("mcp.oauth.enabled")}</Box>
+                <Grid container spacing={2.5}>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <TextField
+                      fullWidth
+                      label="리소스 식별자 (resource)"
+                      placeholder={`${window.location.origin}/mcp`}
+                      value={values["mcp.oauth.resource"] ?? ""}
+                      onChange={(e) =>
+                        setValues((v) => ({
+                          ...v,
+                          "mcp.oauth.resource": e.target.value,
+                        }))
+                      }
+                      helperText="클라이언트가 실제로 접속하는 공개 주소 + /mcp. 비우면 요청의 공개 주소로 만듭니다 — 프록시 뒤에서는 적어 두세요. Keycloak Audience 매퍼에 넣는 값이기도 합니다."
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <TextField
+                      fullWidth
+                      label="허용 대상 (aud 또는 azp)"
+                      value={values["mcp.oauth.audience"] ?? ""}
+                      onChange={(e) =>
+                        setValues((v) => ({
+                          ...v,
+                          "mcp.oauth.audience": e.target.value,
+                        }))
+                      }
+                      helperText="공백으로 구분한 Keycloak 클라이언트 ID 목록. Audience 매퍼 없이 쓰는 호환 경로 — Keycloak 26 은 클라이언트 ID 를 aud 가 아니라 azp 에 담습니다. 거절 메시지가 적을 값을 알려 줍니다."
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <TextField
+                      fullWidth
+                      label="SSO 토큰에 주는 범위"
+                      value={values["mcp.oauth.scopes"] ?? ""}
+                      onChange={(e) =>
+                        setValues((v) => ({
+                          ...v,
+                          "mcp.oauth.scopes": e.target.value,
+                        }))
+                      }
+                      error={mcpProblem !== ""}
+                      helperText={
+                        mcpProblem ||
+                        "read, write, mcp 중에서 공백으로 구분. 토큰의 scope 가 아니라 이 값이 천장입니다. 배정 도구(assign_seat)까지 열려면 write 를 더합니다."
+                      }
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <Stack spacing={1}>
+                      <Stack direction="row" spacing={1} alignItems="center">
+                        <TextField
+                          fullWidth
+                          size="small"
+                          label="MCP 주소 (클라이언트에 줄 값)"
+                          value={mcpResourceValue}
+                          slotProps={{ input: { readOnly: true } }}
+                        />
+                        <Button
+                          size="small"
+                          startIcon={<ContentCopyRounded />}
+                          onClick={() =>
+                            void navigator.clipboard.writeText(mcpResourceValue)
+                          }
+                        >
+                          복사
+                        </Button>
+                      </Stack>
+                      <Stack direction="row" spacing={1} alignItems="center">
+                        <TextField
+                          fullWidth
+                          size="small"
+                          label="메타데이터 주소"
+                          value={mcpMetadataURL(mcpResourceValue)}
+                          slotProps={{ input: { readOnly: true } }}
+                        />
+                        <Button
+                          size="small"
+                          startIcon={<ContentCopyRounded />}
+                          onClick={() =>
+                            void navigator.clipboard.writeText(
+                              mcpMetadataURL(mcpResourceValue),
+                            )
+                          }
+                        >
+                          복사
+                        </Button>
+                      </Stack>
+                    </Stack>
+                  </Grid>
+                </Grid>
+                <Alert severity={mcpOn ? "success" : "info"} sx={{ mt: 2 }}>
+                  {mcpOn
+                    ? "저장하면 /mcp 의 401 에 메타데이터 주소가 붙고 Keycloak 액세스 토큰을 받습니다. Keycloak 에는 웹 로그인과 다른 공개(public) 클라이언트를 만들고 PKCE S256, Standard Flow 만 켭니다 — 관리자 가이드 §3.3 을 따르세요."
+                    : values["mcp.oauth.enabled"] === "true"
+                      ? "Keycloak Issuer URL 이 비어 있어 켜도 꺼진 것처럼 동작합니다."
+                      : "꺼져 있습니다. MCP 는 개인 API 키로만 열리고 메타데이터 주소는 404 입니다."}
+                </Alert>
+              </Box>
+            )}
             {tab === "tracking" && (
               <>
                 <Alert
