@@ -3,6 +3,7 @@ package app
 import (
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"golang.org/x/oauth2"
@@ -81,6 +82,44 @@ func TestSafeReturnToStaysOnSite(t *testing.T) {
 	for _, v := range bad {
 		if safeReturnTo(v) {
 			t.Errorf("%q 는 거절해야 한다", v)
+		}
+	}
+}
+
+// 사용자 권한 화면의 편집은 알림 메일이 닿을 주소를 넣는 유일한 길이고, 비활성화는
+// 로그인·세션·API 키를 한꺼번에 막는다. 잘못된 주소를 받거나 자기 계정을 잠그는
+// 일은 여기서 막는다.
+func TestValidateUserPatch(t *testing.T) {
+	f, tr := false, true
+	str := func(s string) *string { return &s }
+	cases := []struct {
+		name      string
+		in        userPatch
+		target    string
+		wantCode  string
+		wantEmail *string
+	}{
+		{"빈 요청은 아무것도 바꾸지 않고 통과한다", userPatch{}, "u2", "", nil},
+		{"모르는 권한은 거절한다", userPatch{Role: "owner"}, "u2", "invalid_role", nil},
+		{"다른 계정은 비활성화할 수 있다", userPatch{Active: &f}, "u2", "", nil},
+		{"자기 계정은 비활성화할 수 없다", userPatch{Active: &f}, "me", "self_deactivation", nil},
+		{"자기 계정을 다시 켜는 것은 막지 않는다", userPatch{Active: &tr}, "me", "", nil},
+		{"주소는 앞뒤 공백을 걷어낸다", userPatch{Email: str("  admin@corp.example ")}, "u2", "", str("admin@corp.example")},
+		{"빈 주소는 지우라는 뜻으로 받는다", userPatch{Email: str("   ")}, "u2", "", str("")},
+		{"@ 가 없는 주소는 거절한다", userPatch{Email: str("admin.corp.example")}, "u2", "invalid_email", nil},
+		{"표시 이름이 붙은 꼴은 거절한다", userPatch{Email: str("관리자 <admin@corp.example>")}, "u2", "invalid_email", nil},
+		{"주소 여러 개는 거절한다", userPatch{Email: str("a@corp.example, b@corp.example")}, "u2", "invalid_email", nil},
+		{"너무 긴 주소는 거절한다", userPatch{Email: str(strings.Repeat("a", 250) + "@corp.example")}, "u2", "invalid_email", nil},
+	}
+	for _, c := range cases {
+		in := c.in
+		code, message := validateUserPatch(&in, c.target, "me")
+		if code != c.wantCode {
+			t.Errorf("%s: code=%q(%s) want %q", c.name, code, message, c.wantCode)
+			continue
+		}
+		if c.wantEmail != nil && (in.Email == nil || *in.Email != *c.wantEmail) {
+			t.Errorf("%s: email=%v want %q", c.name, in.Email, *c.wantEmail)
 		}
 	}
 }

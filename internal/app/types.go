@@ -11,6 +11,7 @@ type User struct {
 	Role        string     `json:"role"`
 	Source      string     `json:"source"`
 	LastLoginAt *time.Time `json:"lastLoginAt,omitempty"`
+	Active      bool       `json:"active"`
 }
 
 func (u User) IsAdmin() bool { return u.Role == "system_admin" }
