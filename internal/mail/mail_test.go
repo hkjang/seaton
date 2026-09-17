@@ -352,3 +352,64 @@ func TestAPIKeysExpiringBundlesIntoOneMail(t *testing.T) {
 		t.Fatal("base_url 이 없으면 링크를 붙이지 않는다")
 	}
 }
+
+// contextStore 는 실제 데이터베이스처럼 컨텍스트가 끝난 뒤의 기록을 거부한다.
+type contextStore struct{ *MemoryStore }
+
+func (c contextStore) Update(ctx context.Context, id, status string, attempts int, errorMessage string, at time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return c.MemoryStore.Update(ctx, id, status, attempts, errorMessage, at)
+}
+
+// stalledSender 는 TCP 는 받되 응답이 없는 릴레이처럼 발송 컨텍스트가 끝날
+// 때까지 매달렸다가 실패를 돌려준다.
+func stalledSender(ctx context.Context, _ Config, _ Message) error {
+	<-ctx.Done()
+	return errors.New("SMTP 세션 시작 실패: i/o timeout")
+}
+
+func TestStalledRelayOutcomeIsStillRecorded(t *testing.T) {
+	previous := sendGrace
+	sendGrace = 0
+	t.Cleanup(func() { sendGrace = previous })
+
+	store := NewMemoryStore()
+	service := NewService(contextStore{store}, func(context.Context) (map[string]string, error) { return enabledValues, nil }, nil,
+		func() string { return "d1" }, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	service.SetSender(stalledSender)
+	config := ReadConfig(enabledValues)
+	config.Timeout = 20 * time.Millisecond
+	delivery := Delivery{ID: "d1", Event: EventTest, Recipient: "kim@example.test", Status: StatusQueued, CreatedAt: service.now(), UpdatedAt: service.now()}
+	service.record(context.Background(), delivery)
+	service.deliver(delivery, config, Message{To: delivery.Recipient})
+	page, _ := store.List(context.Background(), "", 10)
+	if len(page.Items) != 1 || page.Items[0].Status != StatusFailed || page.Items[0].Attempts != 2 || !strings.Contains(page.Items[0].ErrorMessage, "i/o timeout") {
+		t.Fatalf("멈춘 릴레이라도 결과·시도 횟수·이유가 기록되어야 한다: %+v", page.Items)
+	}
+
+	values := map[string]string{"mail.timeout_seconds": "1"}
+	for key, value := range enabledValues {
+		values[key] = value
+	}
+	store = NewMemoryStore()
+	service = NewService(contextStore{store}, func(context.Context) (map[string]string, error) { return values, nil }, nil,
+		func() string { return "d2" }, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	service.SetSender(stalledSender)
+	if err := service.SendNow(context.Background(), TestMessage(), "u1", "kim@example.test"); err == nil {
+		t.Fatal("멈춘 릴레이면 시험 발송은 실패해야 한다")
+	}
+	page, _ = store.List(context.Background(), "", 10)
+	if len(page.Items) != 1 || page.Items[0].Status != StatusFailed || page.Items[0].Attempts != 1 {
+		t.Fatalf("시험 발송 실패도 대기가 아니라 실패로 기록되어야 한다: %+v", page.Items)
+	}
+}
+
+func TestAPIKeysExpiringDoesNotRecommendRotation(t *testing.T) {
+	// 회전은 옛 키의 만료일을 새 키에 그대로 물려주므로 만료를 벗어나지 못한다.
+	body := APIKeysExpiring([]ExpiringKey{{Name: "ci", Prefix: "seat_abc", ExpiresAt: time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)}}).Render(Config{})
+	if strings.Contains(body, "키를 회전하면") || !strings.Contains(body, "새 키를 발급") {
+		t.Fatalf("만료 임박 안내는 회전이 아니라 새 키 발급을 권해야 한다:\n%s", body)
+	}
+}

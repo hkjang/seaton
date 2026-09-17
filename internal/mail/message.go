@@ -180,7 +180,9 @@ func APIKeysExpiring(keys []ExpiringKey) Notification {
 	for _, key := range keys {
 		lines = append(lines, fmt.Sprintf("- %s (%s…) — %s 만료", key.Name, key.Prefix, key.ExpiresAt.Local().Format("2006-01-02")))
 	}
-	lines = append(lines, "", "내 API 키 화면에서 키를 회전하면 새 키가 발급되고 옛 키는 유예 시간 뒤에 멈춥니다.")
+	// 회전은 옛 키의 만료일을 새 키에 그대로 물려주므로 만료를 미루지 못한다.
+	// 새 유효기간이 필요하면 새 키를 발급해야 한다.
+	lines = append(lines, "", "내 API 키 화면에서 새 키를 발급해 연동에 넣고, 옛 키는 폐기하세요. 키 회전은 만료일을 그대로 이어받아 만료를 미루지 못합니다.")
 	subject := "[SeatOn] API 키 만료 임박"
 	if len(keys) == 1 {
 		subject = fmt.Sprintf("[SeatOn] API 키 '%s' 만료 임박", keys[0].Name)

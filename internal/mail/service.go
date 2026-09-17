@@ -55,6 +55,13 @@ const (
 	StatusFailed = "failed"
 )
 
+// sendGrace 는 연결 마감(mail.go 의 2*Timeout) 위에 더 주는 발송 여유다.
+// 테스트가 줄인다.
+var sendGrace = 15 * time.Second
+
+// recordTimeout 은 발송 결과를 기록하는 데 주는 시간이다. 발송과 따로 센다.
+const recordTimeout = 10 * time.Second
+
 type Service struct {
 	store     Store
 	settings  func(context.Context) (map[string]string, error)
@@ -144,7 +151,7 @@ func (s *Service) SendNow(ctx context.Context, notification Notification, actorI
 	delivery := Delivery{ID: s.newID(), Event: notification.Event, Recipient: recipient, Subject: notification.Subject,
 		ActorID: actorID, Status: StatusQueued, CreatedAt: s.now(), UpdatedAt: s.now()}
 	s.record(ctx, delivery)
-	sendContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), config.Timeout+5*time.Second)
+	sendContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), config.Timeout+sendGrace)
 	defer cancel()
 	err = s.send(sendContext, config, Message{To: recipient, Subject: notification.Subject, Body: notification.Render(config)})
 	delivery.Attempts = 1
@@ -155,7 +162,7 @@ func (s *Service) SendNow(ctx context.Context, notification Notification, actorI
 // deliver 는 한 번 더 시도한다. 잠깐 연결을 거부하는 릴레이는 흔하고, 알림을
 // 잃는 것이 몇 초 기다리는 것보다 나쁘다.
 func (s *Service) deliver(delivery Delivery, config Config, message Message) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*config.Timeout+15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*config.Timeout+sendGrace)
 	defer cancel()
 	var err error
 	for attempt := 1; attempt <= 2; attempt++ {
@@ -173,6 +180,9 @@ func (s *Service) deliver(delivery Delivery, config Config, message Message) {
 	s.complete(ctx, delivery, err)
 }
 
+// complete 는 결과를 기록한다. 발송 컨텍스트는 쓰지 않는다 — 멈춘 릴레이는
+// 연결 마감까지 매달려 발송 컨텍스트를 먼저 소진하는데, 그때 기록까지
+// 같이 죽으면 정확히 진단이 필요한 장애가 '대기' 로 남는다.
 func (s *Service) complete(ctx context.Context, delivery Delivery, cause error) {
 	status, message := StatusSent, ""
 	if cause != nil {
@@ -182,7 +192,9 @@ func (s *Service) complete(ctx context.Context, delivery Delivery, cause error) 
 	if s.store == nil {
 		return
 	}
-	if err := s.store.Update(ctx, delivery.ID, status, max(delivery.Attempts, 1), trim(message, 1000), s.now()); err != nil {
+	recordContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordTimeout)
+	defer cancel()
+	if err := s.store.Update(recordContext, delivery.ID, status, max(delivery.Attempts, 1), trim(message, 1000), s.now()); err != nil {
 		s.logger.Warn("메일 발송 결과를 기록하지 못했습니다", "error", err)
 	}
 }
