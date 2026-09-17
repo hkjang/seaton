@@ -9,6 +9,7 @@ export interface User {
   role: Role;
   source: "local" | "oidc";
   lastLoginAt?: string;
+  active: boolean;
 }
 export interface VersionInfo {
   version: string;

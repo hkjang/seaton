@@ -43,6 +43,8 @@ OpenAPI 3.1 문서는 실행 중인 SeatOn의 `/api/v1/openapi.json`에서 확�
 - `GET /api/v1/dashboard/action-count` 처리 필요 건수만 집계, 상단 배지처럼 자주 부르는 곳에 사용
 - `GET /api/v1/dashboard/issues?kind=` 처리 필요 상세 작업 큐
 - `POST /api/v1/dashboard/issues/{kind}/{id}/resolve` 퇴직자 좌석 해제, AI 후보 승인, 조직 영역 보정
+- `GET /api/v1/users` 사용자 목록(시스템 관리자). `active`로 사용 여부를 함께 준다
+- `PATCH /api/v1/users/{id}` `{"role":"…","email":"…","active":true|false}` 중 보낸 항목만 바꾼다. `email`은 빈 문자열이면 지운다. 자기 계정 비활성화는 `400 self_deactivation`, SSO 사용자의 `email`은 Keycloak 프로필을 따르므로 `409 sso_managed_email`
 
 ## MCP
 

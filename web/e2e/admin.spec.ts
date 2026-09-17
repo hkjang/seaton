@@ -101,6 +101,64 @@ test.describe("관리 화면", () => {
     expect(problems()).toHaveLength(0);
   });
 
+  test("관리자 계정의 메일 주소를 화면에서 넣고 지운다", async ({ page }) => {
+    // 로컬 관리자 계정은 처음부터 주소가 없어 알림 메일을 받을 길이 없었다.
+    // 화면에서 넣은 주소가 API 에 남고, 비우면 다시 없어지는지 본다.
+    const problems = watchConsole(page);
+    const me = await (await page.request.get("/api/v1/auth/me")).json();
+    const myID = me.user.id as string;
+    const users = async () =>
+      (await (await page.request.get("/api/v1/users")).json()).items as Array<{
+        id: string;
+        email?: string;
+        active: boolean;
+      }>;
+    const before = (await users()).find((u) => u.id === myID)!;
+    const address = `admin-${Date.now()}@corp.example`;
+    try {
+      await page.goto("/admin/users");
+      await page.getByRole("button", { name: /admin 메일 주소 변경/ }).click();
+      const field = page.getByRole("dialog").getByLabel("메일 주소");
+      // 잘못된 주소는 서버에 보내지 않고 창 안에서 바로 알린다.
+      await field.fill("admin.corp.example");
+      await page.getByRole("dialog").getByRole("button", { name: "저장" }).click();
+      await expect(
+        page.getByRole("dialog").getByText("메일 주소 형식이 올바르지 않습니다"),
+      ).toBeVisible();
+      await field.fill(`  ${address}  `);
+      await field.press("Enter");
+      await expect(page.getByRole("dialog")).toBeHidden();
+      await expect(page.getByRole("cell", { name: address })).toBeVisible();
+      expect((await users()).find((u) => u.id === myID)!.email).toBe(address);
+
+      // 자기 계정의 사용 스위치는 꺼져 있고, API 로 직접 보내도 거절된다.
+      const mine = page.getByRole("switch", { name: /admin 계정 사용/ });
+      await expect(mine).toBeChecked();
+      await expect(mine).toBeDisabled();
+      const refused = await page.request.patch(`/api/v1/users/${myID}`, {
+        headers: { "X-CSRF-Token": me.csrfToken },
+        data: { active: false },
+      });
+      expect(refused.status()).toBe(400);
+      expect((await refused.json()).error.code).toBe("self_deactivation");
+      expect((await users()).find((u) => u.id === myID)!.active).toBe(true);
+
+      // 비우면 주소를 지운다.
+      await page.getByRole("button", { name: /admin 메일 주소 변경/ }).click();
+      await page.getByRole("dialog").getByLabel("메일 주소").fill("");
+      await page.getByRole("dialog").getByRole("button", { name: "저장" }).click();
+      await expect(page.getByRole("dialog")).toBeHidden();
+      await expect(page.getByRole("cell", { name: /주소 없음/ })).toBeVisible();
+      expect((await users()).find((u) => u.id === myID)!.email).toBeUndefined();
+    } finally {
+      await page.request.patch(`/api/v1/users/${myID}`, {
+        headers: { "X-CSRF-Token": me.csrfToken },
+        data: { email: before.email ?? "" },
+      });
+    }
+    expect(problems()).toHaveLength(0);
+  });
+
   test("시스템 설정은 불러오기 전에 빈 값으로 덮어쓰지 않는다", async ({
     page,
   }) => {

@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"fmt"
 	"net/http"
+	"net/mail"
 	"net/url"
 	"strconv"
 	"strings"
@@ -63,7 +64,7 @@ func (s *Server) localLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var hash string
-	u, err := scanUser(s.db.QueryRow(r.Context(), `SELECT id,username,display_name,COALESCE(email,''),employee_id,role,source,last_login_at FROM users WHERE lower(username)=lower($1) AND active=true`, strings.TrimSpace(in.Username)))
+	u, err := scanUser(s.db.QueryRow(r.Context(), `SELECT id,username,display_name,COALESCE(email,''),employee_id,role,source,last_login_at,active FROM users WHERE lower(username)=lower($1) AND active=true`, strings.TrimSpace(in.Username)))
 	if err == nil {
 		err = s.db.QueryRow(r.Context(), `SELECT COALESCE(password_hash,'') FROM users WHERE id=$1`, u.ID).Scan(&hash)
 	}
@@ -119,7 +120,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			if strings.HasPrefix(raw, "seat_") {
 				var keyID string
 				var err error
-				u, err = scanUser(s.db.QueryRow(r.Context(), `SELECT u.id,u.username,u.display_name,COALESCE(u.email,''),u.employee_id,u.role,u.source,u.last_login_at
+				u, err = scanUser(s.db.QueryRow(r.Context(), `SELECT u.id,u.username,u.display_name,COALESCE(u.email,''),u.employee_id,u.role,u.source,u.last_login_at,u.active
 					FROM api_keys k JOIN users u ON u.id=k.user_id
 					WHERE k.secret_hash=$1 AND u.active=true AND (k.expires_at IS NULL OR k.expires_at>now()) AND (k.revoked_at IS NULL OR k.grace_until>now())`, s.keys.Digest(raw)))
 				if err == nil {
@@ -143,7 +144,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 				writeError(w, http.StatusUnauthorized, "authentication_required", "로그인이 필요합니다")
 				return
 			}
-			u, err = scanUser(s.db.QueryRow(r.Context(), `SELECT u.id,u.username,u.display_name,COALESCE(u.email,''),u.employee_id,u.role,u.source,u.last_login_at
+			u, err = scanUser(s.db.QueryRow(r.Context(), `SELECT u.id,u.username,u.display_name,COALESCE(u.email,''),u.employee_id,u.role,u.source,u.last_login_at,u.active
 				FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>now() AND u.active=true`, s.keys.Digest(cookie.Value)))
 			if err != nil {
 				http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
@@ -416,7 +417,7 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "user_provision_failed", "SSO 사용자를 등록하지 못했습니다")
 		return
 	}
-	u, err := scanUser(s.db.QueryRow(r.Context(), `SELECT id,username,display_name,COALESCE(email,''),employee_id,role,source,last_login_at FROM users WHERE id=$1`, id))
+	u, err := scanUser(s.db.QueryRow(r.Context(), `SELECT id,username,display_name,COALESCE(email,''),employee_id,role,source,last_login_at,active FROM users WHERE id=$1`, id))
 	if err != nil || s.issueSession(w, r, u) != nil {
 		writeError(w, http.StatusInternalServerError, "session_error", "로그인 세션을 만들지 못했습니다")
 		return
@@ -482,7 +483,7 @@ func (s *Server) testOIDC(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.db.Query(r.Context(), `SELECT id,username,display_name,COALESCE(email,''),employee_id,role,source,last_login_at FROM users ORDER BY display_name`)
+	rows, err := s.db.Query(r.Context(), `SELECT id,username,display_name,COALESCE(email,''),employee_id,role,source,last_login_at,active FROM users ORDER BY display_name`)
 	if err != nil {
 		notFoundOrServer(w, err)
 		return
@@ -498,26 +499,77 @@ func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": users})
 }
 
-func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Role   string `json:"role"`
-		Active *bool  `json:"active"`
+// userPatch 는 PATCH /users/{id} 가 받는 항목이다. 보내지 않은 항목은 그대로 둔다.
+// email 은 빈 문자열이면 주소를 지운다(로컬 관리자 계정은 처음부터 주소가 없다).
+type userPatch struct {
+	Role   string  `json:"role"`
+	Active *bool   `json:"active"`
+	Email  *string `json:"email"`
+}
+
+// validateUserPatch 는 요청값을 다듬고 검사해 오류 코드와 안내문을 돌려준다.
+// 자기 계정은 막을 수 없다 — 마지막 관리자가 스스로를 잠그면 화면으로는
+// 되돌릴 길이 없다.
+func validateUserPatch(in *userPatch, targetID, actorID string) (code, message string) {
+	allowed := map[string]bool{"employee": true, "department_manager": true, "seat_manager": true, "system_admin": true}
+	if in.Role != "" && !allowed[in.Role] {
+		return "invalid_role", "권한 값이 올바르지 않습니다"
 	}
+	if in.Active != nil && !*in.Active && targetID == actorID {
+		return "self_deactivation", "자기 계정은 비활성화할 수 없습니다"
+	}
+	if in.Email != nil {
+		email := strings.TrimSpace(*in.Email)
+		if email != "" && !validEmailAddress(email) {
+			return "invalid_email", "메일 주소 형식이 올바르지 않습니다"
+		}
+		in.Email = &email
+	}
+	return "", ""
+}
+
+// validEmailAddress 는 "이름 <주소>" 꼴이 아닌 주소 하나만 받는다. 알림 메일의
+// 받는 사람 칸에 그대로 들어가므로 표시 이름이나 여러 주소는 거절한다.
+func validEmailAddress(s string) bool {
+	if len(s) > 254 || strings.ContainsAny(s, " \t\r\n,;<>") {
+		return false
+	}
+	addr, err := mail.ParseAddress(s)
+	return err == nil && addr.Address == s
+}
+
+func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
+	var in userPatch
 	if !decodeJSON(w, r, &in) {
 		return
 	}
-	allowed := map[string]bool{"employee": true, "department_manager": true, "seat_manager": true, "system_admin": true}
-	if in.Role != "" && !allowed[in.Role] {
-		writeError(w, 400, "invalid_role", "권한 값이 올바르지 않습니다")
+	actor, _ := userFrom(r)
+	targetID := chiURLParam(r, "userID")
+	if code, message := validateUserPatch(&in, targetID, actor.ID); code != "" {
+		writeError(w, 400, code, message)
 		return
 	}
-	_, err := s.db.Exec(r.Context(), `UPDATE users SET role=COALESCE(NULLIF($2,''),role),active=COALESCE($3,active),updated_at=now() WHERE id=$1`, chiURLParam(r, "userID"), in.Role, in.Active)
+	if in.Email != nil {
+		// SSO 사용자의 주소는 로그인할 때마다 Keycloak 프로필로 덮어쓰므로 여기서
+		// 고쳐도 다음 로그인에 사라진다. 조용히 잃는 대신 거절한다.
+		var source string
+		if err := s.db.QueryRow(r.Context(), `SELECT source FROM users WHERE id=$1`, targetID).Scan(&source); err != nil {
+			notFoundOrServer(w, err)
+			return
+		}
+		if source != "local" {
+			writeError(w, http.StatusConflict, "sso_managed_email", "SSO 사용자의 메일 주소는 Keycloak 프로필에서 가져옵니다")
+			return
+		}
+	}
+	_, err := s.db.Exec(r.Context(), `UPDATE users SET role=COALESCE(NULLIF($2,''),role),active=COALESCE($3,active),
+		email=CASE WHEN $4 THEN NULLIF($5,'') ELSE email END,updated_at=now() WHERE id=$1`,
+		targetID, in.Role, in.Active, in.Email != nil, in.Email)
 	if err != nil {
 		notFoundOrServer(w, err)
 		return
 	}
-	u, _ := userFrom(r)
-	s.audit(r.Context(), u.ID, "user.update", "user", chiURLParam(r, "userID"), r.RemoteAddr, in)
+	s.audit(r.Context(), actor.ID, "user.update", "user", targetID, r.RemoteAddr, in)
 	w.WriteHeader(http.StatusNoContent)
 }
 
