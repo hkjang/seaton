@@ -337,21 +337,53 @@ func TestDiscoveryFailureIsNotAnInvalidToken(t *testing.T) {
 func TestMCPOAuthScopesAreCappedByAdmin(t *testing.T) {
 	cases := []struct {
 		configured, carried, want string
+		refused                   bool
 	}{
 		// Keycloak 의 평범한 scope 는 어휘 밖이라 관리자 설정 그대로.
-		{"read mcp", "openid profile email", "read mcp"},
-		{"read mcp", "", "read mcp"},
+		{configured: "read mcp", carried: "openid profile email", want: "read mcp"},
+		{configured: "read mcp", carried: "", want: "read mcp"},
 		// 토큰이 이 앱의 어휘를 실어 오면 교집합만.
-		{"read write mcp", "openid mcp read", "read mcp"},
-		{"read mcp", "write mcp", "mcp"},
-		// 관리자가 주지 않은 범위는 토큰이 요구해도 없다.
-		{"read mcp", "write", ""},
+		{configured: "read write mcp", carried: "openid mcp read", want: "read mcp"},
+		{configured: "read mcp", carried: "write mcp", want: "mcp"},
+		// 관리자가 주지 않은 범위만 요구한 토큰은 거절이다. 빈 범위를 돌려주면
+		// /mcp 가 그것을 "세션 인증(무제한)"으로 읽어 오히려 전부 열린다.
+		{configured: "read mcp", carried: "write", refused: true},
+		{configured: "mcp", carried: "read", refused: true},
+		{configured: "read mcp", carried: "openid write", refused: true},
 	}
 	for _, c := range cases {
-		got := strings.Join(mcpOAuthScopes(strings.Fields(c.configured), strings.Fields(c.carried)), " ")
-		if got != c.want {
+		granted, refusal := mcpOAuthScopes(strings.Fields(c.configured), strings.Fields(c.carried))
+		if c.refused {
+			if refusal == nil || refusal.status != http.StatusForbidden || refusal.code != "insufficient_scope" {
+				t.Errorf("configured=%q carried=%q: 403 insufficient_scope 로 거절해야 한다: granted=%v refusal=%v", c.configured, c.carried, granted, refusal)
+			}
+			continue
+		}
+		if refusal != nil {
+			t.Errorf("configured=%q carried=%q: 거절하면 안 된다: %v", c.configured, c.carried, refusal)
+			continue
+		}
+		if got := strings.Join(granted, " "); got != c.want {
 			t.Errorf("configured=%q carried=%q: got %q want %q", c.configured, c.carried, got, c.want)
 		}
+	}
+}
+
+// 관리자 천장 밖의 범위만 실은 토큰은 /mcp 에 발을 들이지 못한다. 예전에는 빈
+// 범위로 통과해 mcp·write 검사를 모두 건너뛰었다 — 천장이 read mcp 인데 write
+// 만 든 토큰이 쓰기 도구까지 열었다.
+func TestTokenOutsideAdminScopeCeilingIsRefused(t *testing.T) {
+	idp := newFakeIdP(t)
+	s, logs := oauthServer(t, enabledValues(idp, map[string]string{"mcp.oauth.resource": "https://seaton.intra/mcp", "mcp.oauth.scopes": "read mcp"}))
+	got := mcpCall(s, idp.token(t, map[string]any{"aud": []string{"https://seaton.intra/mcp"}, "scope": "openid write"}))
+	if got.Code != http.StatusForbidden || !strings.Contains(got.Body.String(), "insufficient_scope") {
+		t.Fatalf("천장 밖 범위만 실은 토큰은 403 insufficient_scope: %d %s", got.Code, got.Body.String())
+	}
+	if strings.Contains(got.Body.String(), `"tools"`) {
+		t.Fatalf("도구 목록이 열렸다: %s", got.Body.String())
+	}
+	if !strings.Contains(logs.String(), "mcp oauth token rejected") || !strings.Contains(logs.String(), "insufficient_scope") {
+		t.Fatalf("거절 원인이 로그에 없다: %s", logs.String())
 	}
 }
 

@@ -25,7 +25,7 @@ Authorization: Bearer seat_xxxxxxxxxxxxxxxxxxxxxxxxx
 - `GET /.well-known/oauth-protected-resource` · `GET /.well-known/oauth-protected-resource/mcp` — RFC 9728 메타데이터. 인증 없음, 맨 JSON, `Access-Control-Allow-Origin: *`. 꺼져 있으면 `404 mcp_oauth_disabled`
 - `/mcp` 의 `401` 에 `WWW-Authenticate: Bearer realm="SeatOn", resource_metadata="…/.well-known/oauth-protected-resource/mcp"`(거부된 토큰이면 `, error="invalid_token"`). REST 401 에는 붙지 않는다
 - 검사: JWKS 서명(RS/ES/PS 만), `iss`=`oidc.issuer_url`, `exp`·`nbf`, `typ=ID` 거부, `cnf` 있으면 거부, `sub` 필수, 대상(`aud` 에 리소스 식별자 또는 `aud`/`azp` 가 `mcp.oauth.audience` 에)
-- 계정: `preferred_username`(없으면 `email`)으로 이미 웹 SSO 로그인으로 등록된 활성 계정만. 없으면 `401 account_not_registered`. 범위는 `mcp.oauth.scopes`(기본 `read mcp`)가 정하고, 토큰이 `read`/`write`/`mcp` 를 실어 오면 교집합
+- 계정: `preferred_username`(없으면 `email`)으로 이미 웹 SSO 로그인으로 등록된 활성 계정만. 없으면 `401 account_not_registered`. 범위는 `mcp.oauth.scopes`(기본 `read mcp`)가 정하고, 토큰이 `read`/`write`/`mcp` 를 실어 오면 교집합. 교집합이 비면 `403 insufficient_scope`
 - OAuth 토큰은 `/mcp` 에서만 받는다. REST 경로에 내면 `401 authentication_required`
 - Keycloak discovery 에 닿지 못하면 `503 sso_unavailable`(도전 헤더 없음)
 

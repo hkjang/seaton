@@ -286,14 +286,22 @@ func (s *Server) verifyMCPAccessToken(ctx context.Context, cfg mcpOAuthConfig, r
 	if identity.Username == "" {
 		identity.Username = "oidc-" + token.Subject
 	}
-	identity.Scopes = mcpOAuthScopes(cfg.Scopes, strings.Fields(claims.Scope))
+	scopes, refusal := mcpOAuthScopes(cfg.Scopes, strings.Fields(claims.Scope))
+	if refusal != nil {
+		return identity, refusal
+	}
+	identity.Scopes = scopes
 	return identity, nil
 }
 
 // mcpOAuthScopes 는 주체에게 줄 범위다. 관리자 설정이 천장이고, 토큰이 이 앱의
 // 어휘(read·write·mcp)를 실어 왔으면 그 교집합만 준다. Keycloak 의 평범한
 // scope(openid profile email)는 어휘 밖이라 무시한다.
-func mcpOAuthScopes(configured, carried []string) []string {
+//
+// 교집합이 비면 거절이다. 빈 범위를 돌려주면 안 된다 — /mcp 는 빈 범위를
+// "세션 인증(범위 제한 없음)"으로 읽으므로, 천장이 read mcp 인데 write 만 실은
+// 토큰이 오히려 쓰기 도구까지 모두 여는 권한 상승이 된다.
+func mcpOAuthScopes(configured, carried []string) ([]string, *mcpOAuthRefusal) {
 	narrowed := false
 	for _, scope := range carried {
 		if containsString(mcpOAuthAppScopes, scope) {
@@ -302,7 +310,7 @@ func mcpOAuthScopes(configured, carried []string) []string {
 		}
 	}
 	if !narrowed {
-		return append([]string{}, configured...)
+		return append([]string{}, configured...), nil
 	}
 	granted := []string{}
 	for _, scope := range configured {
@@ -310,7 +318,12 @@ func mcpOAuthScopes(configured, carried []string) []string {
 			granted = append(granted, scope)
 		}
 	}
-	return granted
+	if len(granted) == 0 {
+		return nil, &mcpOAuthRefusal{status: http.StatusForbidden, code: "insufficient_scope",
+			message: fmt.Sprintf("SSO 토큰의 범위(%s)에 관리자가 허용한 범위(%s)가 하나도 없습니다", strings.Join(carried, " "), strings.Join(configured, " ")),
+			cause:   fmt.Errorf("token scopes %v share nothing with configured %v", carried, configured)}
+	}
+	return granted, nil
 }
 
 // oauthPrincipal 은 액세스 토큰을 등록된 계정으로 바꾼다. 계정은 만들지 않는다 —
