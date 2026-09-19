@@ -10,11 +10,13 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -133,15 +135,21 @@ func TestProtectedResourceMetadata(t *testing.T) {
 		}
 	}
 	// 스위치만 켜고 issuer 가 없으면 꺼진 것처럼 동작한다.
-	half, _ := oauthServer(t, map[string]string{"mcp.oauth.enabled": "true"})
+	half, _ := oauthServer(t, map[string]string{"mcp.oauth.enabled": "true", "mcp.oauth.resource": "https://seaton.intra/mcp"})
 	if got := routed(half, "/.well-known/oauth-protected-resource/mcp"); got.Code != http.StatusNotFound {
 		t.Fatalf("issuer 없이는 404 여야 한다: %d", got.Code)
 	}
+	// 리소스 식별자가 없어도 꺼진 것이다 — 요청의 Host 로 만들어 주지 않는다.
+	noResource, _ := oauthServer(t, map[string]string{"mcp.oauth.enabled": "true", "oidc.issuer_url": "https://keycloak.intra/realms/company", "mcp.oauth.scopes": "read mcp"})
+	if got := routed(noResource, "/.well-known/oauth-protected-resource/mcp"); got.Code != http.StatusNotFound {
+		t.Fatalf("리소스 식별자 없이는 404 여야 한다: %d %s", got.Code, got.Body.String())
+	}
 
-	on, _ := oauthServer(t, map[string]string{"mcp.oauth.enabled": "true", "oidc.issuer_url": "https://keycloak.intra/realms/company/", "mcp.oauth.scopes": "read mcp", "general.service_name": "좌석"})
+	on, _ := oauthServer(t, map[string]string{"mcp.oauth.enabled": "true", "oidc.issuer_url": "https://keycloak.intra/realms/company/", "mcp.oauth.resource": "https://seaton.intra/mcp", "mcp.oauth.scopes": "read mcp", "general.service_name": "좌석"})
 	for _, path := range []string{"/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"} {
+		// Host 와 프록시 헤더가 무엇이든 resource 는 설정값이다.
 		request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8080"+path, nil)
-		request.Header.Set("X-Forwarded-Host", "seaton.intra")
+		request.Header.Set("X-Forwarded-Host", "other-app.intra")
 		request.Header.Set("X-Forwarded-Proto", "https")
 		recorder := httptest.NewRecorder()
 		on.Routes().ServeHTTP(recorder, request)
@@ -158,7 +166,6 @@ func TestProtectedResourceMetadata(t *testing.T) {
 		if _, wrapped := doc["error"]; wrapped || doc["data"] != nil {
 			t.Fatalf("맨 JSON 이어야 한다: %s", recorder.Body.String())
 		}
-		// 리소스 설정이 비어 있으면 프록시가 넘긴 공개 주소로 만든다.
 		if doc["resource"] != "https://seaton.intra/mcp" {
 			t.Fatalf("resource = %v", doc["resource"])
 		}
@@ -176,7 +183,7 @@ func TestProtectedResourceMetadata(t *testing.T) {
 		}
 	}
 
-	// 리소스 식별자를 적어 두면 Host 와 무관하게 그 값이다.
+	// 요청 주소와 다른 리소스 식별자를 적어 두면 그 값이다.
 	fixed, _ := oauthServer(t, map[string]string{"mcp.oauth.enabled": "true", "oidc.issuer_url": "https://keycloak.intra/realms/company", "mcp.oauth.resource": "https://seats.example.com/mcp"})
 	got := routed(fixed, "/.well-known/oauth-protected-resource/mcp")
 	if !strings.Contains(got.Body.String(), `"resource":"https://seats.example.com/mcp"`) {
@@ -237,7 +244,6 @@ func TestVerifyMCPAccessToken(t *testing.T) {
 	other := newFakeIdP(t)
 	resource := "https://seaton.intra/mcp"
 	s, _ := oauthServer(t, nil)
-	request := httptest.NewRequest(http.MethodPost, resource, nil)
 	base := readMCPOAuthConfig(enabledValues(idp, map[string]string{"mcp.oauth.resource": resource}))
 	withAudience := base
 	withAudience.Audiences = []string{"claude-mcp"}
@@ -268,7 +274,7 @@ func TestVerifyMCPAccessToken(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			identity, refusal := s.verifyMCPAccessToken(context.Background(), c.cfg, request, c.token)
+			identity, refusal := s.verifyMCPAccessToken(context.Background(), c.cfg, c.token)
 			if c.username != "" {
 				if refusal != nil {
 					t.Fatalf("통과해야 한다: %v", refusal)
@@ -290,11 +296,56 @@ func TestVerifyMCPAccessToken(t *testing.T) {
 		})
 	}
 	// 다른 앱용 토큰의 거절 문장은 본 것과 고칠 값을 말한다 — 운영자는 이 한 줄로 설정을 끝낸다.
-	_, refusal := s.verifyMCPAccessToken(context.Background(), base, request, idp.token(t, nil))
+	_, refusal := s.verifyMCPAccessToken(context.Background(), base, idp.token(t, nil))
 	for _, want := range []string{`aud=[account]`, `azp="claude-mcp"`, `허용 대상에 "claude-mcp"`, `Audience 매퍼로 "` + resource + `"`} {
 		if !strings.Contains(refusal.message, want) {
 			t.Fatalf("거절 문장에 %q 가 없다: %s", want, refusal.message)
 		}
+	}
+}
+
+// 리소스 식별자와 허용 대상이 비어 있으면(마이그레이션 기본값) 허용값이 하나도
+// 없다 — 요청의 Host 로 리소스 식별자를 만들어 허용값에 넣지 않는다. 예전에는
+// Host: other-app.intra 를 붙이면 aud=https://other-app.intra/mcp 인 같은 realm 의
+// 다른 앱용 토큰이 이 서버에 들어왔다.
+func TestHostHeaderDoesNotBecomeAcceptedAudience(t *testing.T) {
+	idp := newFakeIdP(t)
+	foreign := idp.token(t, map[string]any{"aud": []string{"https://other-app.intra/mcp"}})
+	// 1. 검증기 자체: 설정이 비어 있으면 어떤 aud 도 맞지 않는다.
+	s, _ := oauthServer(t, nil)
+	empty := readMCPOAuthConfig(enabledValues(idp, nil))
+	if empty.Resource != "" || len(empty.Audiences) != 0 {
+		t.Fatalf("기본값이 비어 있어야 하는 검사다: %+v", empty)
+	}
+	identity, refusal := s.verifyMCPAccessToken(context.Background(), empty, foreign)
+	if refusal == nil || refusal.code != "invalid_token" || !strings.Contains(refusal.cause.Error(), "audience") {
+		t.Fatalf("설정이 비어 있으면 대상 검사에서 거절해야 한다: identity=%+v refusal=%v", identity, refusal)
+	}
+	// 리소스 식별자가 있어도 Host 가 아니라 그 값과만 비교한다.
+	fixed := readMCPOAuthConfig(enabledValues(idp, map[string]string{"mcp.oauth.resource": "https://seaton.intra/mcp"}))
+	if _, refusal := s.verifyMCPAccessToken(context.Background(), fixed, foreign); refusal == nil {
+		t.Fatal("다른 리소스 서버용 aud 가 통과했다")
+	}
+	// 2. 라우터를 지나서: 리소스 식별자 없이 켠 서버에 Host 를 조작한 요청은
+	// 켜지지 않은 서버와 똑같이 거절된다 — 토큰을 보지도 않는다.
+	server, logs := oauthServer(t, enabledValues(idp, nil))
+	for _, host := range []string{"other-app.intra", "seaton.intra"} {
+		request := httptest.NewRequest(http.MethodPost, "https://"+host+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+		request.Host = host
+		request.Header.Set("X-Forwarded-Host", host)
+		request.Header.Set("X-Forwarded-Proto", "https")
+		request.Header.Set("Authorization", "Bearer "+idp.token(t, map[string]any{"aud": []string{"https://" + host + "/mcp"}}))
+		recorder := httptest.NewRecorder()
+		server.Routes().ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusUnauthorized || !strings.Contains(recorder.Body.String(), "authentication_required") || strings.Contains(recorder.Body.String(), `"tools"`) {
+			t.Fatalf("Host %s: %d %s", host, recorder.Code, recorder.Body.String())
+		}
+		if recorder.Header().Get("WWW-Authenticate") != "" {
+			t.Fatalf("Host %s: 리소스 식별자 없이는 도전 헤더도 없어야 한다: %q", host, recorder.Header().Get("WWW-Authenticate"))
+		}
+	}
+	if strings.Contains(logs.String(), "mcp oauth") {
+		t.Fatalf("리소스 식별자 없이는 토큰을 보지도 않아야 한다: %s", logs.String())
 	}
 }
 
@@ -313,15 +364,25 @@ func TestRefusedTokenGetsChallengeAndLoggedCause(t *testing.T) {
 	if !strings.Contains(logs.String(), "mcp oauth token rejected") || !strings.Contains(logs.String(), "expired") {
 		t.Fatalf("거절 원인이 로그에 없다: %s", logs.String())
 	}
+	// 운영자가 접근 로그의 요청과 짝지을 수 있게 요청 ID 도 함께 — 값은 라우터의
+	// RequestID 미들웨어가 채운 것이라 비어 있지 않다.
+	if !strings.Contains(logs.String(), "request_id=") || strings.Contains(logs.String(), `request_id=""`) || strings.Contains(logs.String(), "request_id= ") {
+		t.Fatalf("거절 로그에 요청 ID 가 없다: %s", logs.String())
+	}
 	if strings.Contains(got.Body.String(), "expired") {
 		t.Fatalf("라이브러리 오류 원문이 클라이언트로 나갔다: %s", got.Body.String())
 	}
 }
 
 func TestDiscoveryFailureIsNotAnInvalidToken(t *testing.T) {
-	dead := httptest.NewServer(http.NotFoundHandler())
-	dead.Close()
-	s, logs := oauthServer(t, map[string]string{"mcp.oauth.enabled": "true", "oidc.issuer_url": dead.URL, "mcp.oauth.resource": "https://seaton.intra/mcp"})
+	// discovery 에 500 으로 답하는 IdP. 호출 횟수를 세어 음성 캐시를 본다.
+	var hits atomic.Int32
+	broken := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.Error(w, "down", http.StatusInternalServerError)
+	}))
+	t.Cleanup(broken.Close)
+	s, logs := oauthServer(t, map[string]string{"mcp.oauth.enabled": "true", "oidc.issuer_url": broken.URL, "mcp.oauth.resource": "https://seaton.intra/mcp"})
 	got := mcpCall(s, "a.b.c")
 	if got.Code != http.StatusServiceUnavailable || !strings.Contains(got.Body.String(), "sso_unavailable") {
 		t.Fatalf("Keycloak 에 닿지 못하면 503: %d %s", got.Code, got.Body.String())
@@ -329,8 +390,79 @@ func TestDiscoveryFailureIsNotAnInvalidToken(t *testing.T) {
 	if got.Header().Get("WWW-Authenticate") != "" {
 		t.Fatal("503 에 도전 헤더를 붙이면 클라이언트가 로그인 루프에 빠진다")
 	}
-	if !strings.Contains(logs.String(), "sso_unavailable") {
-		t.Fatalf("원인이 로그에 없다: %s", logs.String())
+	if !strings.Contains(logs.String(), "sso_unavailable") || !strings.Contains(logs.String(), "request_id=") {
+		t.Fatalf("원인과 요청 ID 가 로그에 없다: %s", logs.String())
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("첫 요청은 discovery 를 한 번 해야 한다: %d", hits.Load())
+	}
+	// 실패는 음성 캐시된다 — 다음 요청은 IdP 를 다시 두드리지 않고 바로 503 이다.
+	if got := mcpCall(s, "a.b.c"); got.Code != http.StatusServiceUnavailable {
+		t.Fatalf("두 번째 요청도 503: %d %s", got.Code, got.Body.String())
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("실패한 discovery 를 요청마다 다시 시도했다: %d 회", hits.Load())
+	}
+	// 음성 캐시가 지나면 다시 시도한다.
+	s.oauth.mu.Lock()
+	s.oauth.byIssuer[strings.TrimRight(broken.URL, "/")].failedAt = time.Now().Add(-2 * mcpOAuthDiscoveryRetry)
+	s.oauth.mu.Unlock()
+	if got := mcpCall(s, "a.b.c"); got.Code != http.StatusServiceUnavailable {
+		t.Fatalf("재시도도 실패면 503: %d", got.Code)
+	}
+	if hits.Load() != 2 {
+		t.Fatalf("음성 캐시가 지나면 discovery 를 다시 해야 한다: %d 회", hits.Load())
+	}
+	// 취소된 요청은 discovery 를 기다리지 않고 돌아온다 — 응답을 기다릴 클라이언트가 없다.
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := s.oauthProvider(cancelled, "http://127.0.0.1:1/never"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("취소된 요청: %v", err)
+	}
+}
+
+// 같은 issuer 의 동시 요청은 discovery 를 한 번만 하고, 뮤텍스 뒤에 직렬로 서지
+// 않는다 — 느린 IdP 를 기다리는 동안 다른 요청이 뮤텍스를 잡을 수 있다.
+func TestDiscoveryIsSharedAndOffTheMutex(t *testing.T) {
+	var hits atomic.Int32
+	release := make(chan struct{})
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		<-release
+		http.Error(w, "down", http.StatusInternalServerError)
+	}))
+	t.Cleanup(slow.Close)
+	s, _ := oauthServer(t, nil)
+	results := make(chan error, 4)
+	for i := 0; i < 4; i++ {
+		go func() {
+			_, err := s.oauthProvider(context.Background(), slow.URL)
+			results <- err
+		}()
+	}
+	// IdP 가 답하지 않는 동안에도 뮤텍스는 비어 있어야 한다 — 잡혀 있으면 여기서 멈춘다.
+	for hits.Load() == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	locked := make(chan struct{})
+	go func() {
+		s.oauth.mu.Lock()
+		s.oauth.mu.Unlock()
+		close(locked)
+	}()
+	select {
+	case <-locked:
+	case <-time.After(2 * time.Second):
+		t.Fatal("discovery 가 진행 중인 동안 뮤텍스가 잡혀 있다")
+	}
+	close(release)
+	for i := 0; i < 4; i++ {
+		if err := <-results; err == nil {
+			t.Fatal("500 discovery 가 성공했다")
+		}
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("동시 요청 4개가 discovery 를 %d 번 했다", hits.Load())
 	}
 }
 
@@ -391,7 +523,7 @@ func TestMCPOAuthSettingsValidation(t *testing.T) {
 	issuer := "https://keycloak.intra/realms/company"
 	ok := []map[string]string{
 		{},
-		{"mcp.oauth.enabled": "true", "oidc.issuer_url": issuer, "mcp.oauth.scopes": "read mcp"},
+		{"mcp.oauth.enabled": "true", "oidc.issuer_url": issuer, "mcp.oauth.scopes": "read mcp", "mcp.oauth.resource": "https://seaton.intra/mcp"},
 		{"mcp.oauth.enabled": "true", "oidc.issuer_url": issuer, "mcp.oauth.scopes": "read write mcp", "mcp.oauth.resource": "https://seaton.intra/mcp", "mcp.oauth.audience": "claude-mcp cursor"},
 		{"mcp.oauth.resource": "http://localhost:8080/mcp"},
 		// 꺼져 있으면 issuer 가 없어도 저장된다 — 기본 설치가 그렇다.
@@ -403,8 +535,11 @@ func TestMCPOAuthSettingsValidation(t *testing.T) {
 		}
 	}
 	bad := []map[string]string{
-		{"mcp.oauth.enabled": "true", "mcp.oauth.scopes": "read mcp"},
-		{"mcp.oauth.enabled": "true", "oidc.issuer_url": issuer, "mcp.oauth.scopes": "read"},
+		{"mcp.oauth.enabled": "true", "mcp.oauth.scopes": "read mcp", "mcp.oauth.resource": "https://seaton.intra/mcp"},
+		{"mcp.oauth.enabled": "true", "oidc.issuer_url": issuer, "mcp.oauth.scopes": "read", "mcp.oauth.resource": "https://seaton.intra/mcp"},
+		// 리소스 식별자 없이는 켤 수 없다 — 요청 주소로 대신 만들지 않는다.
+		{"mcp.oauth.enabled": "true", "oidc.issuer_url": issuer, "mcp.oauth.scopes": "read mcp"},
+		{"mcp.oauth.enabled": "true", "oidc.issuer_url": issuer, "mcp.oauth.scopes": "read mcp", "mcp.oauth.audience": "claude-mcp"},
 		{"mcp.oauth.scopes": "read admin mcp"},
 		{"mcp.oauth.resource": "seaton.intra/mcp"},
 		{"mcp.oauth.resource": "https://seaton.intra/api"},

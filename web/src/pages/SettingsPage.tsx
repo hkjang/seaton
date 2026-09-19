@@ -682,7 +682,7 @@ export function SettingsPage() {
                           "mcp.oauth.resource": e.target.value,
                         }))
                       }
-                      helperText="클라이언트가 실제로 접속하는 공개 주소 + /mcp. 비우면 요청의 공개 주소로 만듭니다 — 프록시 뒤에서는 적어 두세요. Keycloak Audience 매퍼에 넣는 값이기도 합니다."
+                      helperText="클라이언트가 실제로 접속하는 공개 주소 + /mcp. 켜려면 필수입니다 — 요청 주소로 대신 만들지 않습니다(그러면 Host 헤더가 허용 대상을 정하게 됩니다). Keycloak Audience 매퍼에 넣는 값이기도 합니다."
                     />
                   </Grid>
                   <Grid size={{ xs: 12, md: 6 }}>
@@ -764,7 +764,7 @@ export function SettingsPage() {
                   {mcpOn
                     ? "저장하면 /mcp 의 401 에 메타데이터 주소가 붙고 Keycloak 액세스 토큰을 받습니다. Keycloak 에는 웹 로그인과 다른 공개(public) 클라이언트를 만들고 PKCE S256, Standard Flow 만 켭니다 — 관리자 가이드 §3.3 을 따르세요."
                     : values["mcp.oauth.enabled"] === "true"
-                      ? "Keycloak Issuer URL 이 비어 있어 켜도 꺼진 것처럼 동작합니다."
+                      ? "Keycloak Issuer URL 또는 리소스 식별자가 비어 있어 켜도 꺼진 것처럼 동작합니다."
                       : "꺼져 있습니다. MCP 는 개인 API 키로만 열리고 메타데이터 주소는 404 입니다."}
                 </Alert>
               </Box>

@@ -27,18 +27,26 @@ describe("mcpMetadataURL", () => {
 });
 
 describe("mcpOAuthActive", () => {
-  it("스위치와 issuer 가 둘 다 있어야 켜진다", () => {
+  it("스위치·issuer·리소스 식별자가 모두 있어야 켜진다", () => {
     expect(mcpOAuthActive({ "mcp.oauth.enabled": "true" })).toBe(false);
     expect(
       mcpOAuthActive({
         "mcp.oauth.enabled": "true",
         "oidc.issuer_url": "https://keycloak.intra/realms/company",
       }),
+    ).toBe(false);
+    expect(
+      mcpOAuthActive({
+        "mcp.oauth.enabled": "true",
+        "oidc.issuer_url": "https://keycloak.intra/realms/company",
+        "mcp.oauth.resource": "https://seaton.intra/mcp",
+      }),
     ).toBe(true);
     expect(
       mcpOAuthActive({
         "mcp.oauth.enabled": "false",
         "oidc.issuer_url": "https://keycloak.intra/realms/company",
+        "mcp.oauth.resource": "https://seaton.intra/mcp",
       }),
     ).toBe(false);
   });
@@ -49,7 +57,7 @@ describe("mcpOAuthProblem", () => {
   it("꺼져 있고 범위가 어휘 안이면 문제 없음", () => {
     expect(mcpOAuthProblem({ "mcp.oauth.scopes": "read mcp" })).toBe("");
   });
-  it("어휘 밖 범위, issuer 없음, mcp 빠짐을 차례로 잡는다", () => {
+  it("어휘 밖 범위, issuer 없음, mcp 빠짐, 리소스 식별자 없음을 차례로 잡는다", () => {
     expect(mcpOAuthProblem({ "mcp.oauth.scopes": "read admin" })).toContain(
       "admin",
     );
@@ -71,6 +79,14 @@ describe("mcpOAuthProblem", () => {
         "mcp.oauth.enabled": "true",
         "oidc.issuer_url": issuer,
         "mcp.oauth.scopes": "read write mcp",
+      }),
+    ).toContain("리소스 식별자");
+    expect(
+      mcpOAuthProblem({
+        "mcp.oauth.enabled": "true",
+        "oidc.issuer_url": issuer,
+        "mcp.oauth.scopes": "read write mcp",
+        "mcp.oauth.resource": "https://seaton.intra/mcp",
       }),
     ).toBe("");
   });

@@ -145,7 +145,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 				// 꺼져 있으면 아래 세션 검사로 떨어져 전과 똑같이 거절된다.
 				if cfg := s.mcpOAuthConfig(r.Context()); cfg.active() {
 					var err error
-					u, apiScopes, err = s.oauthPrincipal(r.Context(), cfg, r, raw)
+					u, apiScopes, err = s.oauthPrincipal(r.Context(), cfg, raw)
 					if err != nil {
 						s.refuseMCPToken(w, r, cfg, err)
 						return

@@ -154,7 +154,7 @@ curl -s http://127.0.0.1:8080/api/v1/version</code></pre>
                 <tr><td><code>oidc.admin_group</code></td><td>시스템 관리자 그룹</td><td><code>/seaton-admins</code></td><td>이 그룹이면 <code>system_admin</code></td></tr>
                 <tr><td><code>oidc.seat_manager_group</code></td><td>좌석 관리자 그룹</td><td><code>/seaton-seat-managers</code></td><td>이 그룹이면 <code>seat_manager</code>, 둘 다 아니면 <code>employee</code></td></tr>
                 <tr><td><code>mcp.oauth.enabled</code></td><td>MCP 를 Keycloak 액세스 토큰으로도 열기</td><td><code>false</code></td><td>켜면 <code>/mcp</code>가 개인 키 외에 Keycloak 액세스 토큰(OAuth 2.1)도 받고 <code>/.well-known/oauth-protected-resource</code>가 열림(§3.3 MCP를 SSO로 열기). <code>oidc.issuer_url</code>이 비어 있으면 저장이 <code>400 invalid_setting</code></td></tr>
-                <tr><td><code>mcp.oauth.resource</code></td><td>리소스 식별자 (resource)</td><td>빈 값</td><td>클라이언트가 실제로 접속하는 공개 주소 + <code>/mcp</code>(예 <code>https://seaton.intra/mcp</code>). 비우면 요청의 <code>X-Forwarded-Host</code>·<code>X-Forwarded-Proto</code>로 만듦 — 프록시 뒤에서는 적어 둘 것. <code>/mcp</code>로 끝나는 절대 URL만 저장됨</td></tr>
+                <tr><td><code>mcp.oauth.resource</code></td><td>리소스 식별자 (resource)</td><td>빈 값</td><td>클라이언트가 실제로 접속하는 공개 주소 + <code>/mcp</code>(예 <code>https://seaton.intra/mcp</code>). 켤 때 필수 — 요청의 Host로 대신 만들지 않음(그러면 Host 헤더가 대상 검사의 허용값이 됨). <code>/mcp</code>로 끝나는 절대 URL만 저장됨</td></tr>
                 <tr><td><code>mcp.oauth.audience</code></td><td>허용 대상 (aud 또는 azp)</td><td>빈 값</td><td>공백 구분 Keycloak 클라이언트 ID 목록. 토큰의 <code>aud</code> 또는 <code>azp</code>가 이 중 하나면 통과(Audience 매퍼 없이 쓰는 호환 경로)</td></tr>
                 <tr><td><code>mcp.oauth.scopes</code></td><td>SSO 토큰에 주는 범위</td><td><code>read mcp</code></td><td>공백 구분 <code>read</code>·<code>write</code>·<code>mcp</code>. 토큰의 <code>scope</code>가 아니라 이 값이 천장. 켤 때 <code>mcp</code>가 없으면 저장 거부</td></tr>
             </tbody>
@@ -251,7 +251,7 @@ curl -s http://127.0.0.1:8080/api/v1/version</code></pre>
         </ol>
         <p>*SeatOn 쪽 설정*</p>
         <figure><img src="assets/guide/admin-settings-mcp-sso.png" alt="시스템 설정 · Keycloak SSO 탭의 MCP SSO(OAuth) 인증 카드 — 스위치, 리소스 식별자, 허용 대상, 범위, 복사 가능한 MCP 주소와 메타데이터 주소" loading="lazy"><figcaption>시스템 설정 · Keycloak SSO 탭의 MCP SSO(OAuth) 인증 카드 — 스위치, 리소스 식별자, 허용 대상, 범위, 복사 가능한 MCP 주소와 메타데이터 주소</figcaption></figure>
-        <p>시스템 설정 → <strong>Keycloak SSO</strong> 탭 아래의 <strong>MCP SSO(OAuth) 인증</strong> 카드에서 스위치를 켜고, <strong>리소스 식별자</strong>에 공개 주소 + <code>/mcp</code>를 적고, 호환 경로라면 <strong>허용 대상</strong>에 클라이언트 ID를 적은 뒤 저장합니다. 카드의 <strong>MCP 주소</strong>와 <strong>메타데이터 주소</strong>는 복사해 사용자에게 주는 값입니다. 켜는 조건은 <code>oidc.issuer_url</code>이 있고 범위에 <code>mcp</code>가 있는 것이며, 아니면 저장이 <code>400 invalid_setting</code>으로 거부됩니다.</p>
+        <p>시스템 설정 → <strong>Keycloak SSO</strong> 탭 아래의 <strong>MCP SSO(OAuth) 인증</strong> 카드에서 스위치를 켜고, <strong>리소스 식별자</strong>에 공개 주소 + <code>/mcp</code>를 적고, 호환 경로라면 <strong>허용 대상</strong>에 클라이언트 ID를 적은 뒤 저장합니다. 카드의 <strong>MCP 주소</strong>와 <strong>메타데이터 주소</strong>는 복사해 사용자에게 주는 값입니다. 켜는 조건은 <code>oidc.issuer_url</code>과 리소스 식별자가 있고 범위에 <code>mcp</code>가 있는 것이며, 아니면 저장이 <code>400 invalid_setting</code>으로 거부됩니다.</p>
         <p>*확인*</p>
         <pre><code># 1. 메타데이터 — 200, 맨 JSON, Access-Control-Allow-Origin: *
 curl -si https://seaton.intra/.well-known/oauth-protected-resource/mcp

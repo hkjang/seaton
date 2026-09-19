@@ -8,8 +8,9 @@
 export const MCP_SCOPES = ["read", "write", "mcp"] as const;
 
 /**
- * 리소스 식별자. 설정값이 있으면 그것이고, 없으면 서버가 요청의 공개 주소로
- * 만드는 것과 같은 규칙으로 현재 오리진 + /mcp 를 보여 준다.
+ * 화면에 보여 줄 리소스 식별자. 설정값이 있으면 그것이고, 없으면 적을 값의
+ * 제안으로 현재 오리진 + /mcp 를 보여 준다 — 서버는 빈 값을 요청 주소로 대신
+ * 만들지 않으므로(Host 헤더가 허용 대상이 되면 안 된다) 제안일 뿐이다.
  */
 export function mcpResource(configured: string, origin: string): string {
   const value = configured.trim();
@@ -27,13 +28,15 @@ export function mcpMetadataURL(resource: string): string {
 }
 
 /**
- * 켜지는 조건: 스위치가 켜져 있고 Keycloak issuer 가 있다. 서버의 active() 와
- * 같다. 스위치만 켜고 issuer 가 없으면 꺼진 것처럼 동작하므로 화면도 그렇게 말한다.
+ * 켜지는 조건: 스위치가 켜져 있고 Keycloak issuer 와 리소스 식별자가 있다.
+ * 서버의 active() 와 같다. 스위치만 켜고 둘 중 하나가 없으면 꺼진 것처럼
+ * 동작하므로 화면도 그렇게 말한다.
  */
 export function mcpOAuthActive(values: Record<string, string>): boolean {
   return (
     values["mcp.oauth.enabled"] === "true" &&
-    (values["oidc.issuer_url"] ?? "").trim() !== ""
+    (values["oidc.issuer_url"] ?? "").trim() !== "" &&
+    (values["mcp.oauth.resource"] ?? "").trim() !== ""
   );
 }
 
@@ -57,6 +60,9 @@ export function mcpOAuthProblem(values: Record<string, string>): string {
   }
   if (enabled && !scopes.includes("mcp")) {
     return "범위에 mcp 가 있어야 합니다 — 없으면 토큰이 통과해도 /mcp 가 403 을 냅니다";
+  }
+  if (enabled && (values["mcp.oauth.resource"] ?? "").trim() === "") {
+    return "켜려면 리소스 식별자가 필요합니다 — 요청 주소로 대신 만들지 않습니다";
   }
   return "";
 }

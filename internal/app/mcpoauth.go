@@ -8,8 +8,10 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -42,8 +44,10 @@ type mcpOAuthConfig struct {
 	Enabled bool
 	// Issuer 는 Keycloak realm 의 issuer(oidc.issuer_url). 토큰의 iss 와 같아야 한다.
 	Issuer string
-	// Resource 는 이 서버가 주장하는 리소스 식별자(RFC 8707). 비어 있으면
-	// 요청의 공개 주소 + /mcp 로 만든다.
+	// Resource 는 이 서버가 주장하는 리소스 식별자(RFC 8707). 설정값만 쓴다 —
+	// 요청의 Host 로 만들지 않는다. Host 는 클라이언트(공격자)가 정하는 값이라
+	// 그것으로 만든 식별자를 aud 허용값에 넣으면 같은 realm 의 다른 리소스
+	// 서버용 토큰이 Host 헤더 하나로 들어온다. 비어 있으면 켜지지 않는다.
 	Resource string
 	// Audiences 는 관리자가 적은 허용 대상. 토큰의 aud 또는 azp 와 비교한다.
 	Audiences []string
@@ -83,31 +87,26 @@ func (s *Server) loadMCPOAuth(ctx context.Context) mcpOAuthConfig {
 }
 
 // active 는 토큰을 실제로 받을지다. 스위치가 켜져 있어도 issuer 가 없으면
-// 검증할 길이 없으므로 꺼진 것처럼 동작한다(저장 시점에 validate 가 막지만,
-// 옛 데이터나 SQL 로 넣은 값은 그 검사를 거치지 않았다).
-func (c mcpOAuthConfig) active() bool { return c.Enabled && c.Issuer != "" }
-
-// resource 는 클라이언트가 실제로 접속하는 공개 주소 + MCP 경로다. 설정값이
-// 우선이고, 없을 때만 요청의 Host(프록시가 넘긴 X-Forwarded-Host 포함)로 만든다.
-func (c mcpOAuthConfig) resource(r *http.Request) string {
-	if c.Resource != "" {
-		return c.Resource
-	}
-	return requestBaseURL(r) + "/mcp"
+// 검증할 길이 없고, 리소스 식별자가 없으면 대상 검사의 허용값과 메타데이터의
+// resource 를 설정값으로 만들 수 없으므로 꺼진 것처럼 동작한다(저장 시점에
+// validate 가 막지만, 옛 데이터나 SQL 로 넣은 값은 그 검사를 거치지 않았다).
+func (c mcpOAuthConfig) active() bool {
+	return c.Enabled && c.Issuer != "" && c.Resource != ""
 }
 
 // metadataURL 은 거절된 클라이언트가 인증 서버를 찾으러 가는 문서의 주소다.
-func (c mcpOAuthConfig) metadataURL(r *http.Request) string {
-	resource := c.resource(r)
-	if parsed, err := url.Parse(resource); err == nil && parsed.Host != "" {
+// 리소스 식별자에서만 만든다 — 요청의 Host 는 보지 않는다.
+func (c mcpOAuthConfig) metadataURL() string {
+	if parsed, err := url.Parse(c.Resource); err == nil && parsed.Host != "" {
 		return parsed.Scheme + "://" + parsed.Host + "/.well-known/oauth-protected-resource" + parsed.Path
 	}
-	return strings.TrimSuffix(resource, "/mcp") + "/.well-known/oauth-protected-resource/mcp"
+	return strings.TrimSuffix(c.Resource, "/mcp") + "/.well-known/oauth-protected-resource/mcp"
 }
 
-// validate 는 저장하려는 값이 말이 되는지 본다. 켜는 조건은 issuer 가 있고
-// 범위가 이 앱의 어휘 안에 있으며 mcp 를 포함하는 것이다 — mcp 가 없으면 토큰이
-// 통과해도 /mcp 가 403 을 내므로 켜 둘 이유가 없다.
+// validate 는 저장하려는 값이 말이 되는지 본다. 켜는 조건은 issuer 와 리소스
+// 식별자가 있고 범위가 이 앱의 어휘 안에 있으며 mcp 를 포함하는 것이다 — mcp 가
+// 없으면 토큰이 통과해도 /mcp 가 403 을 내므로 켜 둘 이유가 없다. 리소스
+// 식별자는 요청 Host 로 대신 만들지 않으므로(위 Resource 참고) 켤 때 필수다.
 func (c mcpOAuthConfig) validate() error {
 	if c.Resource != "" {
 		parsed, err := url.Parse(c.Resource)
@@ -134,6 +133,9 @@ func (c mcpOAuthConfig) validate() error {
 		}
 		if !containsString(c.Scopes, "mcp") {
 			return errors.New("MCP SSO 범위에는 mcp 가 있어야 합니다 — 없으면 토큰이 통과해도 /mcp 가 403 을 냅니다")
+		}
+		if c.Resource == "" {
+			return errors.New("MCP SSO 인증을 켜려면 리소스 식별자(클라이언트가 접속하는 공개 주소 + /mcp)가 필요합니다 — 요청 주소로 대신 만들지 않습니다")
 		}
 	}
 	return nil
@@ -162,28 +164,81 @@ func (s *Server) validateMCPOAuthSettings(ctx context.Context, tx pgx.Tx) error 
 // 으로의 왕복이고 그 뒤의 JWKS 가 모든 토큰을 검증하므로, 요청마다 하면 MCP
 // 호출마다 Keycloak 지연이 앞에 붙는다. go-oidc 는 모르는 key id 를 만나면 키
 // 집합을 다시 받아오므로 키 회전에 캐시 무효화가 필요 없다.
+//
+// discovery 는 뮤텍스 밖에서 한다. 잠근 채 Keycloak 을 기다리면 IdP 가 멎었을
+// 때 JWT 모양 bearer 를 실은 모든 /mcp 요청이 그 뒤에 직렬로 선다. 같은 issuer
+// 의 동시 요청은 한 번의 discovery 를 함께 기다리고(singleflight), 실패는
+// mcpOAuthDiscoveryRetry 동안 음성 캐시해 그 사이의 요청은 IdP 를 두드리지
+// 않고 바로 503 을 받는다.
 type oauthProviders struct {
 	mu       sync.Mutex
-	byIssuer map[string]*oidc.Provider
+	byIssuer map[string]*oauthDiscovery
 }
+
+// oauthDiscovery 는 한 issuer 의 discovery 한 번이다. done 이 닫히면 provider
+// 또는 err 가 정해져 있다.
+type oauthDiscovery struct {
+	done     chan struct{}
+	provider *oidc.Provider
+	err      error
+	failedAt time.Time
+}
+
+const (
+	// mcpOAuthDiscoveryTimeout 은 discovery·JWKS 한 요청의 상한이다. 요청
+	// 컨텍스트와 분리된 서버 수명 컨텍스트로 가므로 이것이 유일한 상한이다.
+	mcpOAuthDiscoveryTimeout = 10 * time.Second
+	// mcpOAuthDiscoveryRetry 는 실패한 discovery 를 다시 시도하기까지의 간격이다.
+	mcpOAuthDiscoveryRetry = 30 * time.Second
+)
+
+// mcpOAuthHTTPClient 는 Keycloak 으로 가는 discovery·JWKS 요청에 쓴다.
+// http.DefaultClient 는 타임아웃이 없다.
+var mcpOAuthHTTPClient = &http.Client{Timeout: mcpOAuthDiscoveryTimeout}
 
 func (s *Server) oauthProvider(ctx context.Context, issuer string) (*oidc.Provider, error) {
 	s.oauth.mu.Lock()
-	defer s.oauth.mu.Unlock()
-	if provider := s.oauth.byIssuer[issuer]; provider != nil {
-		return provider, nil
+	entry := s.oauth.byIssuer[issuer]
+	if entry != nil {
+		select {
+		case <-entry.done:
+			if entry.err != nil && time.Since(entry.failedAt) >= mcpOAuthDiscoveryRetry {
+				entry = nil // 음성 캐시가 지났다 — 다시 시도한다.
+			}
+		default:
+			// 진행 중 — 아래에서 함께 기다린다.
+		}
 	}
-	// discovery 는 이 요청보다 오래 살아야 한다 — provider 가 뒤의 키 요청에
-	// 이 컨텍스트를 계속 쓴다.
-	provider, err := oidc.NewProvider(context.WithoutCancel(ctx), issuer)
-	if err != nil {
-		return nil, err
+	if entry == nil {
+		entry = &oauthDiscovery{done: make(chan struct{})}
+		if s.oauth.byIssuer == nil {
+			s.oauth.byIssuer = map[string]*oauthDiscovery{}
+		}
+		s.oauth.byIssuer[issuer] = entry
+		go entry.run(issuer)
 	}
-	if s.oauth.byIssuer == nil {
-		s.oauth.byIssuer = map[string]*oidc.Provider{}
+	s.oauth.mu.Unlock()
+	select {
+	case <-entry.done:
+		return entry.provider, entry.err
+	case <-ctx.Done():
+		// 요청이 취소됐다. discovery 는 계속 돌아 다음 요청이 결과를 쓴다.
+		return nil, ctx.Err()
 	}
-	s.oauth.byIssuer[issuer] = provider
-	return provider, nil
+}
+
+// run 은 discovery 를 요청과 분리된 컨텍스트로 한다. provider 는 이 컨텍스트
+// (의 HTTP 클라이언트)를 뒤의 JWKS 요청에도 쓰므로 어느 한 요청에 묶여서는
+// 안 되고, 타임아웃은 클라이언트가 건다. go-oidc 는 키 집합에 취소를 뗀
+// 컨텍스트를 쓰므로 여기서 cancel 해도 뒤의 키 요청은 막히지 않는다.
+func (d *oauthDiscovery) run(issuer string) {
+	defer close(d.done)
+	ctx, cancel := context.WithTimeout(context.Background(), mcpOAuthDiscoveryTimeout)
+	defer cancel()
+	d.provider, d.err = oidc.NewProvider(oidc.ClientContext(ctx, mcpOAuthHTTPClient), issuer)
+	if d.err != nil {
+		d.failedAt = time.Now()
+	}
 }
 
 // looksLikeJWT 는 "키가 아닌 것"과 "우리가 받는 어떤 토큰도 아닌 것"을 가르는
@@ -223,7 +278,7 @@ type mcpTokenIdentity struct {
 
 // verifyMCPAccessToken 은 Keycloak 액세스 토큰을 검사한다: 서명·iss·exp·nbf 는
 // go-oidc 가, typ·cnf·sub·대상은 여기서. 데이터베이스는 건드리지 않는다.
-func (s *Server) verifyMCPAccessToken(ctx context.Context, cfg mcpOAuthConfig, r *http.Request, raw string) (mcpTokenIdentity, *mcpOAuthRefusal) {
+func (s *Server) verifyMCPAccessToken(ctx context.Context, cfg mcpOAuthConfig, raw string) (mcpTokenIdentity, *mcpOAuthRefusal) {
 	var identity mcpTokenIdentity
 	provider, err := s.oauthProvider(ctx, cfg.Issuer)
 	if err != nil {
@@ -261,8 +316,13 @@ func (s *Server) verifyMCPAccessToken(ctx context.Context, cfg mcpOAuthConfig, r
 	// 이 토큰이 이 서버를 위한 것인가. 실제 Keycloak 26 은 액세스 토큰의 aud 에
 	// account 만 싣고 발급받은 클라이언트는 azp 에 담는다 — 그래서 "aud 에 리소스
 	// 식별자가 있거나(Audience 매퍼), aud 또는 azp 가 관리자 목록에 있거나" 다.
-	resource := cfg.resource(r)
-	accepted := append([]string{resource}, cfg.Audiences...)
+	// 허용값은 설정에서만 온다. 요청의 Host 로 만든 값은 여기 없다 — 그것은
+	// 토큰을 내미는 쪽이 정하는 값이라 허용값이 될 수 없다.
+	resource := cfg.Resource
+	accepted := append([]string{}, cfg.Audiences...)
+	if resource != "" {
+		accepted = append(accepted, resource)
+	}
 	bound := append(append([]string{}, token.Audience...), claims.AuthorizedParty)
 	matched := false
 	for _, value := range bound {
@@ -330,8 +390,8 @@ func mcpOAuthScopes(configured, carried []string) ([]string, *mcpOAuthRefusal) {
 // 웹으로 로그인하는 순간이 등록이고, 프로그램이 토큰을 내미는 순간은 누군가를
 // 등록할 자리가 아니다. source='oidc' 를 요구하므로 이름이 같은 로컬 계정이
 // 토큰으로 열리는 일도 없다.
-func (s *Server) oauthPrincipal(ctx context.Context, cfg mcpOAuthConfig, r *http.Request, raw string) (User, []string, error) {
-	identity, refusal := s.verifyMCPAccessToken(ctx, cfg, r, raw)
+func (s *Server) oauthPrincipal(ctx context.Context, cfg mcpOAuthConfig, raw string) (User, []string, error) {
+	identity, refusal := s.verifyMCPAccessToken(ctx, cfg, raw)
 	if refusal != nil {
 		return User{}, nil, refusal
 	}
@@ -354,11 +414,11 @@ func (s *Server) oauthPrincipal(ctx context.Context, cfg mcpOAuthConfig, r *http
 func (s *Server) refuseMCPToken(w http.ResponseWriter, r *http.Request, cfg mcpOAuthConfig, err error) {
 	var refusal *mcpOAuthRefusal
 	if !errors.As(err, &refusal) {
-		s.logger.Error("mcp oauth lookup failed", "error", err)
+		s.logger.Error("mcp oauth lookup failed", "error", err, "request_id", middleware.GetReqID(r.Context()))
 		writeError(w, http.StatusInternalServerError, "database_error", "데이터를 처리하지 못했습니다")
 		return
 	}
-	s.logger.Warn("mcp oauth token rejected", "code", refusal.code, "cause", refusal.cause, "remote", r.RemoteAddr)
+	s.logger.Warn("mcp oauth token rejected", "code", refusal.code, "cause", refusal.cause, "remote", r.RemoteAddr, "request_id", middleware.GetReqID(r.Context()))
 	if refusal.status == http.StatusUnauthorized {
 		s.mcpChallenge(w, r, cfg, true)
 	}
@@ -373,7 +433,7 @@ func (s *Server) mcpChallenge(w http.ResponseWriter, r *http.Request, cfg mcpOAu
 	if r.URL.Path != "/mcp" || !cfg.active() {
 		return
 	}
-	value := fmt.Sprintf(`Bearer realm="SeatOn", resource_metadata=%q`, cfg.metadataURL(r))
+	value := fmt.Sprintf(`Bearer realm="SeatOn", resource_metadata=%q`, cfg.metadataURL())
 	if tokenRejected {
 		value += `, error="invalid_token"`
 	}
@@ -406,7 +466,7 @@ func (s *Server) protectedResourceMetadata(w http.ResponseWriter, r *http.Reques
 		serviceName = "SeatOn"
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"resource":                 cfg.resource(r),
+		"resource":                 cfg.Resource,
 		"authorization_servers":    []string{cfg.Issuer},
 		"bearer_methods_supported": []string{"header"},
 		"scopes_supported":         cfg.Scopes,

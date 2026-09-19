@@ -114,7 +114,7 @@ Compose 전용(컨테이너에 전달되지 않음):
 | `oidc.admin_group` | 시스템 관리자 그룹 | `/seaton-admins` | 이 그룹이면 `system_admin` |
 | `oidc.seat_manager_group` | 좌석 관리자 그룹 | `/seaton-seat-managers` | 이 그룹이면 `seat_manager`, 둘 다 아니면 `employee` |
 | `mcp.oauth.enabled` | MCP 를 Keycloak 액세스 토큰으로도 열기 | `false` | 켜면 `/mcp`가 개인 키 외에 Keycloak 액세스 토큰(OAuth 2.1)도 받고 `/.well-known/oauth-protected-resource`가 열림(§3.3 MCP를 SSO로 열기). `oidc.issuer_url`이 비어 있으면 저장이 `400 invalid_setting` |
-| `mcp.oauth.resource` | 리소스 식별자 (resource) | 빈 값 | 클라이언트가 실제로 접속하는 공개 주소 + `/mcp`(예 `https://seaton.intra/mcp`). 비우면 요청의 `X-Forwarded-Host`·`X-Forwarded-Proto`로 만듦 — 프록시 뒤에서는 적어 둘 것. `/mcp`로 끝나는 절대 URL만 저장됨 |
+| `mcp.oauth.resource` | 리소스 식별자 (resource) | 빈 값 | 클라이언트가 실제로 접속하는 공개 주소 + `/mcp`(예 `https://seaton.intra/mcp`). 켤 때 필수 — 요청의 Host로 대신 만들지 않음(그러면 Host 헤더가 대상 검사의 허용값이 됨). `/mcp`로 끝나는 절대 URL만 저장됨 |
 | `mcp.oauth.audience` | 허용 대상 (aud 또는 azp) | 빈 값 | 공백 구분 Keycloak 클라이언트 ID 목록. 토큰의 `aud` 또는 `azp`가 이 중 하나면 통과(Audience 매퍼 없이 쓰는 호환 경로) |
 | `mcp.oauth.scopes` | SSO 토큰에 주는 범위 | `read mcp` | 공백 구분 `read`·`write`·`mcp`. 토큰의 `scope`가 아니라 이 값이 천장. 켤 때 `mcp`가 없으면 저장 거부 |
 
@@ -218,7 +218,7 @@ SeatOn은 **리소스 서버**입니다. 인증 서버 노릇(`/authorize`, `/to
 
 ![시스템 설정 · Keycloak SSO 탭의 MCP SSO(OAuth) 인증 카드 — 스위치, 리소스 식별자, 허용 대상, 범위, 복사 가능한 MCP 주소와 메타데이터 주소](assets/guide/admin-settings-mcp-sso.png)
 
-시스템 설정 → **Keycloak SSO** 탭 아래의 **MCP SSO(OAuth) 인증** 카드에서 스위치를 켜고, **리소스 식별자**에 공개 주소 + `/mcp`를 적고, 호환 경로라면 **허용 대상**에 클라이언트 ID를 적은 뒤 저장합니다. 카드의 **MCP 주소**와 **메타데이터 주소**는 복사해 사용자에게 주는 값입니다. 켜는 조건은 `oidc.issuer_url`이 있고 범위에 `mcp`가 있는 것이며, 아니면 저장이 `400 invalid_setting`으로 거부됩니다.
+시스템 설정 → **Keycloak SSO** 탭 아래의 **MCP SSO(OAuth) 인증** 카드에서 스위치를 켜고, **리소스 식별자**에 공개 주소 + `/mcp`를 적고, 호환 경로라면 **허용 대상**에 클라이언트 ID를 적은 뒤 저장합니다. 카드의 **MCP 주소**와 **메타데이터 주소**는 복사해 사용자에게 주는 값입니다. 켜는 조건은 `oidc.issuer_url`과 리소스 식별자가 있고 범위에 `mcp`가 있는 것이며, 아니면 저장이 `400 invalid_setting`으로 거부됩니다.
 
 *확인*
 

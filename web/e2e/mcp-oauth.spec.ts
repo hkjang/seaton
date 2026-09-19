@@ -232,6 +232,16 @@ test.describe("MCP SSO(OAuth) 인증", () => {
       "mcp.oauth.resource": "seaton.intra/mcp",
     });
     expect(badResource.status()).toBe(400);
+    // 리소스 식별자 없이는 켤 수 없다 — 요청 주소로 대신 만들면 Host 헤더가
+    // 허용 대상을 정하게 된다.
+    const noResource = await putSettings(page, {
+      "oidc.issuer_url": issuer,
+      "mcp.oauth.enabled": "true",
+      "mcp.oauth.scopes": "read mcp",
+      "mcp.oauth.resource": "",
+    });
+    expect(noResource.status()).toBe(400);
+    expect((await noResource.json()).error.message).toContain("리소스 식별자");
   });
 
   test("Keycloak 토큰으로 /mcp 가 열리고, 등록 전·다른 앱·비활성·REST 는 거절된다", async ({
