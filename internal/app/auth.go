@@ -508,12 +508,16 @@ type userPatch struct {
 }
 
 // validateUserPatch 는 요청값을 다듬고 검사해 오류 코드와 안내문을 돌려준다.
-// 자기 계정은 막을 수 없다 — 마지막 관리자가 스스로를 잠그면 화면으로는
-// 되돌릴 길이 없다.
+// 자기 계정은 막을 수 없고 권한도 낮출 수 없다 — 마지막 관리자가 스스로를
+// 잠그거나 직원으로 내리면 이 화면·이 API 를 더는 부를 수 없어 화면으로는
+// 되돌릴 길이 없다. system_admin 을 다시 고르는 것(현상 유지)은 통과한다.
 func validateUserPatch(in *userPatch, targetID, actorID string) (code, message string) {
 	allowed := map[string]bool{"employee": true, "department_manager": true, "seat_manager": true, "system_admin": true}
 	if in.Role != "" && !allowed[in.Role] {
 		return "invalid_role", "권한 값이 올바르지 않습니다"
+	}
+	if in.Role != "" && in.Role != "system_admin" && targetID == actorID {
+		return "self_demotion", "자기 계정의 권한은 낮출 수 없습니다"
 	}
 	if in.Active != nil && !*in.Active && targetID == actorID {
 		return "self_deactivation", "자기 계정은 비활성화할 수 없습니다"

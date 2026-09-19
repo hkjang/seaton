@@ -37,7 +37,7 @@ func (s *Server) openAPI(w http.ResponseWriter, _ *http.Request) {
 			"/seat-history":                   map[string]any{"get": operation("좌석 변경 이력", true)},
 			"/api-keys":                       map[string]any{"get": operation("내 API 키 조회", true), "post": operation("개인 API 키 생성", true)},
 			"/users":                          map[string]any{"get": operation("사용자 목록 (시스템 관리자)", true)},
-			"/users/{userID}":                 map[string]any{"patch": operation("사용자 권한·메일 주소·사용 여부 변경 ({role, email, active}; 자기 계정 비활성화는 400 self_deactivation, SSO 사용자 email 은 409 sso_managed_email)", true)},
+			"/users/{userID}":                 map[string]any{"patch": operation("사용자 권한·메일 주소·사용 여부 변경 ({role, email, active}; 자기 계정 비활성화는 400 self_deactivation, 자기 계정의 권한 강등은 400 self_demotion, SSO 사용자 email 은 409 sso_managed_email)", true)},
 		},
 	})
 }

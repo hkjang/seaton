@@ -45,3 +45,14 @@ export function canToggleActive(
   if (!user.active) return true;
   return me === null || user.id !== me.id;
 }
+
+/**
+ * 권한 선택을 만질 수 있는 계정. 자기 권한을 낮추면 이 화면을 더는 열 수 없어
+ * 되돌릴 길이 없으므로 서버(self_demotion)와 같이 자기 행은 막는다.
+ */
+export function canChangeRole(
+  user: Pick<User, "id">,
+  me: Pick<User, "id"> | null,
+): boolean {
+  return me === null || user.id !== me.id;
+}
