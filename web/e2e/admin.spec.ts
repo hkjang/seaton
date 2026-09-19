@@ -112,6 +112,7 @@ test.describe("관리 화면", () => {
         id: string;
         email?: string;
         active: boolean;
+        role: string;
       }>;
     const before = (await users()).find((u) => u.id === myID)!;
     const address = `admin-${Date.now()}@corp.example`;
@@ -142,6 +143,21 @@ test.describe("관리 화면", () => {
       expect(refused.status()).toBe(400);
       expect((await refused.json()).error.code).toBe("self_deactivation");
       expect((await users()).find((u) => u.id === myID)!.active).toBe(true);
+
+      // 자기 행의 권한 선택도 꺼져 있고, API 로 직접 낮춰도 거절되어 system_admin
+      // 그대로다. 낮아지면 이 화면·이 API 를 더는 부를 수 없어 되돌릴 길이 없다.
+      await expect(
+        page.getByRole("combobox", { name: /admin 권한/ }),
+      ).toHaveAttribute("aria-disabled", "true");
+      const demoted = await page.request.patch(`/api/v1/users/${myID}`, {
+        headers: { "X-CSRF-Token": me.csrfToken },
+        data: { role: "employee" },
+      });
+      expect(demoted.status()).toBe(400);
+      expect((await demoted.json()).error.code).toBe("self_demotion");
+      expect((await users()).find((u) => u.id === myID)!.role).toBe(
+        "system_admin",
+      );
 
       // 비우면 주소를 지운다.
       await page.getByRole("button", { name: /admin 메일 주소 변경/ }).click();

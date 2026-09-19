@@ -32,7 +32,12 @@ import { api, patchJSON } from "../api";
 import { useAuth } from "../auth";
 import { EmptyState, PageHeader, TableSkeleton } from "../components/AdminUI";
 import { relativeTime, absoluteTime } from "../lib/format";
-import { canToggleActive, emailEditable, normalizeEmail } from "../lib/users";
+import {
+  canChangeRole,
+  canToggleActive,
+  emailEditable,
+  normalizeEmail,
+} from "../lib/users";
 import type { Role, User } from "../types";
 const labels: Record<Role, string> = {
   employee: "직원",
@@ -236,19 +241,32 @@ export function UsersPage() {
                     )}
                   </TableCell>
                   <TableCell>
-                    <Select
-                      size="small"
-                      value={u.role}
-                      onChange={(e) =>
-                        void change(u.id, e.target.value as Role)
+                    {/* 자기 권한을 낮추면 이 화면을 더는 열 수 없어 자기 행은 막는다. */}
+                    <Tooltip
+                      title={
+                        canChangeRole(u, me)
+                          ? ""
+                          : "자기 계정의 권한은 낮출 수 없습니다"
                       }
                     >
-                      {Object.entries(labels).map(([value, label]) => (
-                        <MenuItem key={value} value={value}>
-                          {label}
-                        </MenuItem>
-                      ))}
-                    </Select>
+                      <span>
+                        <Select
+                          size="small"
+                          value={u.role}
+                          disabled={!canChangeRole(u, me)}
+                          onChange={(e) =>
+                            void change(u.id, e.target.value as Role)
+                          }
+                          inputProps={{ "aria-label": `${u.displayName} 권한` }}
+                        >
+                          {Object.entries(labels).map(([value, label]) => (
+                            <MenuItem key={value} value={value}>
+                              {label}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </span>
+                    </Tooltip>
                   </TableCell>
                   <TableCell>
                     {/* 끄면 로그인·세션·API 키가 모두 거부된다. 자기 계정은 끌 수 없다. */}

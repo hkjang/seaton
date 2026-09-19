@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { canToggleActive, emailEditable, normalizeEmail } from "./users";
+import {
+  canChangeRole,
+  canToggleActive,
+  emailEditable,
+  normalizeEmail,
+} from "./users";
 
 describe("normalizeEmail", () => {
   it("앞뒤 공백을 걷어내고 빈 값은 지우라는 뜻으로 받는다", () => {
@@ -42,5 +47,18 @@ describe("canToggleActive", () => {
   });
   it("내가 누군지 모르면 막지 않는다", () => {
     expect(canToggleActive({ id: "u2", active: true }, null)).toBe(true);
+  });
+});
+
+describe("canChangeRole", () => {
+  const me = { id: "me" };
+  it("자기 계정의 권한은 바꿀 수 없다", () => {
+    expect(canChangeRole({ id: "me" }, me)).toBe(false);
+  });
+  it("다른 계정의 권한은 바꿀 수 있다", () => {
+    expect(canChangeRole({ id: "u2" }, me)).toBe(true);
+  });
+  it("내가 누군지 모르면 막지 않는다", () => {
+    expect(canChangeRole({ id: "me" }, null)).toBe(true);
   });
 });
