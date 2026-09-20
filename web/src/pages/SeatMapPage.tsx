@@ -735,6 +735,10 @@ export function SeatMapPage() {
     try {
       const body = {
         seatNo: editor.seatNo,
+        // 생성은 null로 미지정, 수정은 빈 문자열로 기존 구역을 해제한다.
+        organizationId: editor.id
+          ? (editor.organizationId ?? "")
+          : (editor.organizationId || null),
         type: editor.type,
         status: editor.status,
         x: Number(editor.x),
@@ -2400,6 +2404,7 @@ export function SeatMapPage() {
       )}
       <SeatEditor
         value={editor}
+        organizations={organizations}
         onChange={setEditor}
         onClose={() => setEditor(null)}
         onSave={() => void saveSeat()}
@@ -2409,11 +2414,13 @@ export function SeatMapPage() {
 }
 function SeatEditor({
   value,
+  organizations,
   onChange,
   onClose,
   onSave,
 }: {
   value: Partial<Seat> | null;
+  organizations: Organization[];
   onChange: (value: Partial<Seat> | null) => void;
   onClose: () => void;
   onSave: () => void;
@@ -2451,6 +2458,33 @@ function SeatEditor({
                 </Select>
               </FormControl>
             </Stack>
+            <TextField
+              select
+              fullWidth
+              id="seat-organization"
+              label="조직 구역"
+              value={value.organizationId ?? ""}
+              onChange={(event) =>
+                onChange({ ...value, organizationId: event.target.value })
+              }
+              helperText="좌석에 지정할 구역이며 직원 소속은 바뀌지 않습니다"
+              slotProps={{
+                select: {
+                  displayEmpty: true,
+                  SelectDisplayProps: {
+                    "aria-labelledby": "seat-organization-label",
+                  },
+                },
+                inputLabel: { shrink: true },
+              }}
+            >
+              <MenuItem value="">미지정</MenuItem>
+              {organizations.map((organization) => (
+                <MenuItem key={organization.id} value={organization.id}>
+                  {organization.name}
+                </MenuItem>
+              ))}
+            </TextField>
             <Alert severity="info">
               좌표와 크기는 도면 대비 0~1 비율입니다. 도면을 더블 클릭하면 해당
               위치로 새 좌석이 만들어집니다.
