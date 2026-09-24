@@ -81,6 +81,7 @@ import {
   type SeatDirection,
   seatHighlighted,
   seatLabelLayout,
+  seatOrgDetail,
   seatOrgId,
   seatsInReadingOrder,
   shortSeatNo,
@@ -1311,9 +1312,6 @@ export function SeatMapPage() {
     window.addEventListener("keydown", keyboard);
     return () => window.removeEventListener("keydown", keyboard);
   });
-  const selectedEmployee = selected?.employeeId
-    ? employees.find((e) => e.id === selected.employeeId)
-    : undefined;
   if (loading)
     return (
       <Box sx={{ p: { xs: 2, md: 3 } }}>
@@ -2229,7 +2227,11 @@ export function SeatMapPage() {
               </Box>
             </Box>
           </Paper>
-          <Paper sx={{ p: 2.5, minHeight: { xs: 220, lg: 0 } }}>
+          <Paper
+            component="section"
+            aria-label="좌석 상세"
+            sx={{ p: 2.5, minHeight: { xs: 220, lg: 0 } }}
+          >
             {editMode && selectedIds.size > 1 ? (
               <Stack spacing={2.2}>
                 <Box>
@@ -2335,6 +2337,14 @@ export function SeatMapPage() {
                     </Button>
                   </Stack>
                 )}
+                {seatOrgDetail(selected).zone && (
+                  <Box sx={{ mb: 2 }}>
+                    <Info
+                      label="지정 구역"
+                      value={seatOrgDetail(selected).zone}
+                    />
+                  </Box>
+                )}
                 {selected.employeeId ? (
                   <Stack spacing={1.4}>
                     <Stack direction="row" spacing={1.2} alignItems="center">
@@ -2352,16 +2362,12 @@ export function SeatMapPage() {
                     </Stack>
                     <Info
                       label="조직"
-                      value={
-                        selected.organizationName ||
-                        selectedEmployee?.organizationName ||
-                        "정보 없음"
-                      }
+                      value={seatOrgDetail(selected).employee}
                     />
                     <Info
                       label="근무지"
                       value={
-                        selectedEmployee?.workplace || currentMap.buildingName
+                        selected.employeeWorkplace || currentMap.buildingName
                       }
                     />
                   </Stack>
@@ -2530,7 +2536,8 @@ function Info({ label, value }: { label: string; value: string }) {
       <Typography variant="caption" color="text.secondary">
         {label}
       </Typography>
-      <Typography variant="body2" fontWeight={650}>
+      {/* data-info 은 좌석 상세의 값만 집어 읽기 위한 것이다. 화면에는 보이지 않는다. */}
+      <Typography variant="body2" fontWeight={650} data-info={label}>
         {value}
       </Typography>
     </Box>

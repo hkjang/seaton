@@ -47,6 +47,31 @@ export const zoneMismatched = (seat: Seat) =>
 export const seatOrgId = (seat: Seat) =>
   seat.employeeOrganizationId ?? seat.organizationId ?? null;
 
+/** 좌석 상세가 보여줄 두 조직. */
+export type SeatOrgDetail = {
+  /** 실제로 앉은 직원의 소속. */
+  employee: string;
+  /** 좌석에 지정된 구역. 비면 보여줄 구역이 없다는 뜻이다. */
+  zone: string;
+};
+
+/**
+ * 좌석 상세의 조직 표시.
+ *
+ * 지정 구역(organization)과 착석자 소속(employeeOrganization)은 서로 다른 값이다.
+ * 색·툴팁은 이미 착석자 소속을 우선해 읽으므로(seatOrgId, seatSpeech) 상세의 '조직'도
+ * 같은 값을 읽어야 한 좌석이 화면마다 다른 조직으로 보이지 않는다. 지정 구역은 버리지
+ * 않고 따로 내보내며, 둘이 다르면 도면과 같은 말("구역 불일치")로 함께 알린다.
+ */
+export const seatOrgDetail = (seat: Seat): SeatOrgDetail => ({
+  employee: seat.employeeOrganizationName || "정보 없음",
+  zone: seat.organizationName
+    ? zoneMismatched(seat)
+      ? `${seat.organizationName} · 구역 불일치`
+      : seat.organizationName
+    : "",
+});
+
 /**
  * 강조 대상인지 판정한다. 빈 좌석 판정은 seatUnavailable 과 같은 기준을 써야
  * 회색으로 그려진 좌석이 "빈 좌석"으로 강조되는 어긋남이 생기지 않는다.

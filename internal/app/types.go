@@ -62,6 +62,9 @@ type Seat struct {
 	// OrganizationID 는 좌석에 지정된 구역, 아래는 실제로 앉은 직원의 소속이다.
 	EmployeeOrganizationID   *string `json:"employeeOrganizationId,omitempty"`
 	EmployeeOrganizationName string  `json:"employeeOrganizationName,omitempty"`
+	// 좌석 상세는 직원 검색 결과가 아니라 좌석 응답만으로 채워져야 한다.
+	// 검색하지 않고 좌석을 고른 경우에도 근무지를 보여주기 위한 값이다.
+	EmployeeWorkplace string `json:"employeeWorkplace,omitempty"`
 }
 
 type ctxKey string
