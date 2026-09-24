@@ -44,6 +44,7 @@ import ApartmentRounded from "@mui/icons-material/ApartmentRounded";
 import AddRounded from "@mui/icons-material/AddRounded";
 import EditRounded from "@mui/icons-material/EditRounded";
 import DeleteOutlineRounded from "@mui/icons-material/DeleteOutlineRounded";
+import PersonRemoveRounded from "@mui/icons-material/PersonRemoveRounded";
 import OpenWithRounded from "@mui/icons-material/OpenWithRounded";
 import GridOnRounded from "@mui/icons-material/GridOnRounded";
 import GridOffRounded from "@mui/icons-material/GridOffRounded";
@@ -765,6 +766,35 @@ export function SeatMapPage() {
       await chooseMap(mapId);
     } catch (e) {
       setError(e instanceof Error ? e.message : "좌석을 삭제하지 못했습니다");
+    }
+  };
+  // 좌석만 다시 읽고 보고 있던 좌석은 그대로 둔다. chooseMap 은 도면을 바꿀 때
+  // 쓰는 것이라 첫 줄에서 선택을 비우므로, 배정만 달라진 자리에는 쓸 수 없다.
+  const reloadSeats = async () => {
+    if (!mapId) return;
+    const data = await api<{ items: Seat[] }>(
+      `/api/v1/seats?floorMapId=${mapId}`,
+    );
+    setSeats(data.items);
+    setSelected((current) =>
+      current ? (data.items.find((s) => s.id === current.id) ?? null) : current,
+    );
+  };
+  const unassignSeat = async () => {
+    if (!selected?.employeeId) return;
+    if (
+      !confirm(
+        `${selected.seatNo} 좌석에서 ${selected.employeeName ?? "직원"} 님의 배정을 해제할까요?`,
+      )
+    )
+      return;
+    try {
+      await api(`/api/v1/seat-assignments/${selected.id}`, {
+        method: "DELETE",
+      });
+      await reloadSeats();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "배정을 해제하지 못했습니다");
     }
   };
   const updateLocalPositions = (positions: SeatPosition[]) => {
@@ -2370,6 +2400,17 @@ export function SeatMapPage() {
                         selected.employeeWorkplace || currentMap.buildingName
                       }
                     />
+                    {manager && (
+                      <Button
+                        size="small"
+                        color="error"
+                        variant="outlined"
+                        startIcon={<PersonRemoveRounded />}
+                        onClick={() => void unassignSeat()}
+                      >
+                        배정 해제
+                      </Button>
+                    )}
                   </Stack>
                 ) : (
                   <Stack alignItems="center" spacing={1.2} sx={{ pt: 2 }}>
