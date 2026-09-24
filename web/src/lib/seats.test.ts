@@ -9,6 +9,7 @@ import {
   seatHighlighted,
   nextSeatInDirection,
   seatLabelLayout,
+  seatOrgDetail,
   seatOrgId,
   seatsInReadingOrder,
   seatUnavailable,
@@ -111,6 +112,55 @@ describe("zoneMismatched / seatOrgId", () => {
     ).toBe("B");
     expect(seatOrgId(seat({ organizationId: "A" }))).toBe("A");
     expect(seatOrgId(seat())).toBeNull();
+  });
+});
+
+describe("seatOrgDetail", () => {
+  it("착석자 소속을 지정 구역으로 대체하지 않는다", () => {
+    const detail = seatOrgDetail(
+      seat({
+        employeeId: "e1",
+        organizationId: "A",
+        organizationName: "영업팀",
+        employeeOrganizationId: "B",
+        employeeOrganizationName: "개발팀",
+      }),
+    );
+    expect(detail.employee).toBe("개발팀");
+  });
+  it("착석자 소속을 모르면 지정 구역이 아니라 정보 없음이다", () => {
+    const detail = seatOrgDetail(
+      seat({ employeeId: "e1", organizationId: "A", organizationName: "영업팀" }),
+    );
+    expect(detail.employee).toBe("정보 없음");
+  });
+  it("지정 구역은 따로 내보내고 불일치를 함께 알린다", () => {
+    expect(
+      seatOrgDetail(
+        seat({
+          employeeId: "e1",
+          organizationId: "A",
+          organizationName: "영업팀",
+          employeeOrganizationId: "B",
+          employeeOrganizationName: "개발팀",
+        }),
+      ).zone,
+    ).toBe("영업팀 · 구역 불일치");
+    // 같은 조직이면 알릴 불일치가 없다.
+    expect(
+      seatOrgDetail(
+        seat({
+          employeeId: "e1",
+          organizationId: "A",
+          organizationName: "영업팀",
+          employeeOrganizationId: "A",
+          employeeOrganizationName: "영업팀",
+        }),
+      ).zone,
+    ).toBe("영업팀");
+  });
+  it("지정 구역이 없으면 빈 문자열이라 행을 그리지 않는다", () => {
+    expect(seatOrgDetail(seat()).zone).toBe("");
   });
 });
 

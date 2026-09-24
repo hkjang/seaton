@@ -106,6 +106,8 @@ export interface Seat {
   /** 좌석에 지정된 구역(organizationId)과 달리, 실제로 앉은 직원의 소속이다. */
   employeeOrganizationId?: string;
   employeeOrganizationName?: string;
+  /** 앉은 직원의 근무지. 좌석 상세를 직원 검색 결과 없이 채우기 위한 값이다. */
+  employeeWorkplace?: string;
 }
 export interface Employee {
   id: string;
