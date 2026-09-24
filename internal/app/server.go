@@ -38,11 +38,17 @@ type Server struct {
 	// trackingConfig 는 현재 추적 설정을 읽는다. 기본은 settings 테이블이고,
 	// 테스트는 데이터베이스 없이 고정 설정을 넣는다.
 	trackingConfig func(context.Context) tracking.Config
+	// mcpOAuthConfig 는 MCP SSO 설정을 읽는다. 기본은 settings 테이블이고,
+	// 테스트는 데이터베이스 없이 고정 설정을 넣는다.
+	mcpOAuthConfig func(context.Context) mcpOAuthConfig
+	// oauth 는 issuer 별 Keycloak discovery 결과(JWKS 포함)의 캐시다.
+	oauth oauthProviders
 }
 
 func NewServer(db *pgxpool.Pool, keys *platform.Keyring, logger *slog.Logger, webFS fs.FS, version, commit, builtAt string) *Server {
 	s := &Server{db: db, keys: keys, logger: logger, webFS: webFS, version: version, commit: commit, builtAt: builtAt, violations: tracking.NewRecorder()}
 	s.trackingConfig = s.loadTracking
+	s.mcpOAuthConfig = s.loadMCPOAuth
 	return s
 }
 
@@ -123,6 +129,9 @@ func (s *Server) Routes() http.Handler {
 		})
 	})
 	r.With(s.authenticate).Post("/mcp", s.mcp)
+	// RFC 9728: 거절된 MCP 클라이언트가 인증 서버를 찾으러 읽는 문서. 두 경로 모두.
+	r.Get("/.well-known/oauth-protected-resource", s.protectedResourceMetadata)
+	r.Get("/.well-known/oauth-protected-resource/mcp", s.protectedResourceMetadata)
 	r.HandleFunc(tracking.ProxyPrefix+"/*", s.momentoProxy)
 	r.Handle("/*", s.spaHandler())
 	return r

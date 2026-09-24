@@ -62,7 +62,25 @@ export function KeysPage() {
       null,
     ),
     [loading, setLoading] = useState(true),
+    // sso 는 서버가 내는 RFC 9728 메타데이터 그대로다. 관리자가 MCP SSO 를 켰을
+    // 때만 200 이므로, 이 문서가 있다는 것이 곧 "키 없이 연결할 수 있다"는 뜻이다.
+    [sso, setSso] = useState<{
+      resource: string;
+      authorization_servers: string[];
+    } | null>(null),
     [error, setError] = useState("");
+  useEffect(() => {
+    void (async () => {
+      try {
+        const response = await fetch(
+          "/.well-known/oauth-protected-resource/mcp",
+        );
+        if (response.ok) setSso(await response.json());
+      } catch {
+        // 메타데이터를 못 읽으면 키 안내만 보인다.
+      }
+    })();
+  }, []);
   const load = async () => {
     try {
       const data = await api<{ items: KeyItem[] }>("/api/v1/api-keys");
@@ -245,6 +263,19 @@ export function KeysPage() {
         MCP Endpoint: <code>{window.location.origin}/mcp</code> · Authorization:{" "}
         <code>Bearer seat_…</code>
       </Typography>
+      {sso && (
+        <Alert severity="info" sx={{ mt: 2 }} data-testid="mcp-sso-hint">
+          <Typography variant="subtitle2">키 없이 SSO 로 연결하기</Typography>
+          <Typography variant="body2">
+            이 서버의 MCP 는 사내 SSO(Keycloak) 로그인도 받습니다. MCP
+            클라이언트(Claude, Cursor 등)에 주소 <code>{sso.resource}</code>{" "}
+            하나만 등록하면 클라이언트가 스스로 로그인 화면을 띄우고 토큰을 받아
+            옵니다 — 키를 만들거나 붙여 넣을 필요가 없습니다. 지금 로그인한 이
+            계정이 그대로 쓰이며, 권한도 화면과 같습니다. 자동화 스크립트처럼
+            사람이 로그인할 수 없는 곳에서는 여전히 개인 키를 쓰세요.
+          </Typography>
+        </Alert>
+      )}
       <Dialog open={createOpen} onClose={() => setCreateOpen(false)}>
         <DialogTitle>개인 API 키 만들기</DialogTitle>
         <DialogContent>

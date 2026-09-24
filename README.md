@@ -76,6 +76,10 @@ docker compose up -d
 
 그 외 Keycloak 엔드포인트는 Issuer의 표준 Discovery 문서에서 자동 구성한다.
 
+### MCP를 SSO로 열기
+
+`/mcp`는 기본적으로 개인 API 키로만 열린다. 같은 탭의 **MCP SSO(OAuth) 인증** 카드를 켜면(`mcp.oauth.enabled`, 기본 꺼짐) MCP 클라이언트에 주소 하나만 주면 되고, 클라이언트가 `/.well-known/oauth-protected-resource/mcp`(RFC 9728)를 읽어 Keycloak에서 스스로 로그인해 토큰을 받아 온다. SeatOn은 리소스 서버로서 토큰의 서명·발급자·만료·대상(`aud`에 리소스 식별자, 또는 `aud`/`azp`가 허용 대상에)만 검사하고, 이미 웹으로 로그인해 등록된 활성 계정만 통과시킨다 — 계정을 만들거나 권한을 올리지 않으며 REST는 여전히 키와 세션만 받는다. Keycloak 클라이언트·Audience 매퍼 설정과 거부 메시지별 조치는 관리자 가이드 §3.3에 있다.
+
 ## 좌석 인식 엔진
 
 관리자 → 시스템 설정 → AI 분석에서 도면 판독 방식을 고른다.

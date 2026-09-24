@@ -18,6 +18,17 @@ Authorization: Bearer seat_xxxxxxxxxxxxxxxxxxxxxxxxx
 
 키 회전 시 새 버전이 생성되고, 기존 키는 관리자가 설정한 유예시간 동안만 계속 유효하다. 즉시 폐기하면 유예 없이 무효화된다.
 
+### MCP 의 SSO(OAuth 2.1) 인증
+
+관리자가 `mcp.oauth.enabled` 를 켜면 `/mcp` 는 같은 `Authorization: Bearer` 헤더로 Keycloak 액세스 토큰도 받는다(`seat_` 접두사면 키, JWT 모양이면 토큰). SeatOn 은 리소스 서버이고 인증 서버는 Keycloak 이다.
+
+- `GET /.well-known/oauth-protected-resource` · `GET /.well-known/oauth-protected-resource/mcp` — RFC 9728 메타데이터. 인증 없음, 맨 JSON, `Access-Control-Allow-Origin: *`. 꺼져 있으면 `404 mcp_oauth_disabled`
+- `/mcp` 의 `401` 에 `WWW-Authenticate: Bearer realm="SeatOn", resource_metadata="…/.well-known/oauth-protected-resource/mcp"`(거부된 토큰이면 `, error="invalid_token"`). REST 401 에는 붙지 않는다
+- 검사: JWKS 서명(RS/ES/PS 만), `iss`=`oidc.issuer_url`, `exp`·`nbf`, `typ=ID` 거부, `cnf` 있으면 거부, `sub` 필수, 대상(`aud` 에 리소스 식별자 또는 `aud`/`azp` 가 `mcp.oauth.audience` 에)
+- 계정: `preferred_username`(없으면 `email`)으로 이미 웹 SSO 로그인으로 등록된 활성 계정만. 없으면 `401 account_not_registered`. 범위는 `mcp.oauth.scopes`(기본 `read mcp`)가 정하고, 토큰이 `read`/`write`/`mcp` 를 실어 오면 교집합. 교집합이 비면 `403 insufficient_scope`
+- OAuth 토큰은 `/mcp` 에서만 받는다. REST 경로에 내면 `401 authentication_required`
+- Keycloak discovery 에 닿지 못하면 `503 sso_unavailable`(도전 헤더 없음)
+
 ## REST API
 
 OpenAPI 3.1 문서는 실행 중인 SeatOn의 `/api/v1/openapi.json`에서 확인한다. 대표 경로는 다음과 같다.
@@ -52,7 +63,8 @@ SeatOn은 MCP Streamable HTTP 형식의 단일 엔드포인트를 제공한다.
 
 ```text
 POST https://seaton.example.intra/mcp
-Authorization: Bearer seat_...
+Authorization: Bearer seat_...          # 개인 키
+Authorization: Bearer eyJhbGciOi...     # 또는 Keycloak 액세스 토큰 (mcp.oauth.enabled 일 때)
 ```
 
 지원 도구:

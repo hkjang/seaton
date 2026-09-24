@@ -5,7 +5,7 @@ import "net/http"
 func (s *Server) openAPI(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, 200, map[string]any{
 		"openapi":    "3.1.0",
-		"info":       map[string]any{"title": "SeatOn API", "version": s.version, "description": "오프라인 사내 좌석 관리 REST API. 브라우저 세션 또는 개인 Bearer API 키를 사용합니다."},
+		"info":       map[string]any{"title": "SeatOn API", "version": s.version, "description": "오프라인 사내 좌석 관리 REST API. 브라우저 세션 또는 개인 Bearer API 키를 사용합니다. /mcp 는 관리자가 MCP SSO 인증을 켜면 Keycloak 액세스 토큰(OAuth 2.1)도 받으며, 인증 서버 위치는 /.well-known/oauth-protected-resource/mcp (RFC 9728) 에 있습니다."},
 		"servers":    []map[string]string{{"url": "/api/v1"}},
 		"components": map[string]any{"securitySchemes": map[string]any{"bearerApiKey": map[string]string{"type": "http", "scheme": "bearer", "bearerFormat": "SeatOn personal API key"}, "cookieSession": map[string]string{"type": "apiKey", "in": "cookie", "name": sessionCookie}}},
 		"security":   []map[string]any{{"bearerApiKey": []string{}}, {"cookieSession": []string{}}},
