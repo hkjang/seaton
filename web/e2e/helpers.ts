@@ -6,11 +6,19 @@ export const SEED_FLOOR = "3층";
 const USERNAME = process.env.E2E_USERNAME ?? "admin";
 const PASSWORD = process.env.E2E_PASSWORD ?? "e2e-verify-pass-123";
 
-export const login = async (page: Page) => {
-  await page.goto("/login");
+/**
+ * 이미 열려 있는 로그인 화면의 입력란을 채워 보낸다. 깊은 링크로 밀려나 온
+ * 로그인 화면은 주소에 returnTo 를 달고 있으므로 /login 으로 다시 가면 안 된다.
+ */
+export const submitLoginForm = async (page: Page) => {
   await page.fill('input[autocomplete="username"]', USERNAME);
   await page.fill('input[autocomplete="current-password"]', PASSWORD);
   await page.click('button[type="submit"]');
+};
+
+export const login = async (page: Page) => {
+  await page.goto("/login");
+  await submitLoginForm(page);
   await page.waitForURL((url) => !url.pathname.startsWith("/login"));
 };
 

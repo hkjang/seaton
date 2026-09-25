@@ -14,6 +14,7 @@ import CorporateFareRounded from "@mui/icons-material/CorporateFareRounded";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { Logo } from "../components/Logo";
 import { useAuth } from "../auth";
+import { returnToFrom, ssoStartUrl } from "../lib/silentSso";
 
 export function LoginPage() {
   const {
@@ -33,14 +34,18 @@ export function LoginPage() {
     [error, setError] = useState(""),
     [retrying, setRetrying] = useState(false),
     [busy, setBusy] = useState(false);
-  if (user) return <Navigate to="/" replace />;
+  // App 의 Protected 가 주소에 실어 둔 "보려던 자리". 로컬 로그인·이미 있는
+  // 세션·SSO 단추가 모두 이 하나를 쓴다 — 세 곳이 각자 '/' 로 가면 깊은 링크가
+  // 도착하는 길과 도착하지 못하는 길이 갈린다.
+  const returnTo = returnToFrom(location.search);
+  if (user) return <Navigate to={returnTo} replace />;
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
     setError("");
     try {
       await login(username, password);
-      navigate("/");
+      navigate(returnTo);
     } catch (e) {
       setError(e instanceof Error ? e.message : "로그인하지 못했습니다");
     } finally {
@@ -167,7 +172,7 @@ export function LoginPage() {
               size="large"
               variant="contained"
               startIcon={<CorporateFareRounded />}
-              href="/api/v1/auth/oidc/start"
+              href={ssoStartUrl(returnTo)}
               sx={{ mb: 2, height: 48 }}
             >
               사내 SSO로 로그인

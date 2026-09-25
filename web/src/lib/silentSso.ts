@@ -94,13 +94,61 @@ export function safeReturnTo(value: string): string {
     : "/";
 }
 
+/**
+ * 로그인 뒤 돌아갈 자리로 실제로 쓸 값.
+ *
+ * safeReturnTo 로 같은 사이트 안에 묶은 뒤, 로그인 화면 자신은 거절한다 —
+ * returnTo=/login 이면 로그인에 성공해도 다시 로그인 화면으로 돌아가 주소에
+ * '/login' 이 남고, 그것을 기다리는 검증과 사용자 모두 멎는다.
+ */
+function returnTarget(value: string): string {
+  const safe = safeReturnTo(value);
+  return safe === "/login" ||
+    safe.startsWith("/login?") ||
+    safe.startsWith("/login/")
+    ? "/"
+    : safe;
+}
+
+const OIDC_START = "/api/v1/auth/oidc/start";
+
+/**
+ * 세션이 없어 로그인 화면으로 밀어낼 때 쓸 주소.
+ *
+ * 깊은 링크(예: 공유받은 /admin/maps?floor=3)를 주소에 실어 두어야 로그인 뒤
+ * 그 자리로 돌아갈 수 있다. 기본 경로에서 밀려난 경우에는 파라미터를 붙이지
+ * 않는다 — 로그인 뒤 갈 곳이 어차피 '/' 이고, 주소가 지저분해질 뿐이다.
+ *
+ * 이 값을 읽는 쪽은 returnToFrom 이다. 둘은 반드시 짝으로 쓴다.
+ */
+export function loginPathFor(pathname: string, search = ""): string {
+  const target = returnTarget(pathname + search);
+  return target === "/"
+    ? "/login"
+    : `/login?returnTo=${encodeURIComponent(target)}`;
+}
+
+/** loginPathFor 가 실어 둔 돌아갈 자리. 없거나 밖으로 나가면 '/' 다. */
+export function returnToFrom(search: string): string {
+  const value = new URLSearchParams(search).get("returnTo");
+  return value ? returnTarget(value) : "/";
+}
+
+/** 사람이 누르는 SSO 단추의 시작 주소. 돌아갈 자리가 있으면 들고 간다. */
+export function ssoStartUrl(returnTo: string): string {
+  const target = returnTarget(returnTo);
+  return target === "/"
+    ? OIDC_START
+    : `${OIDC_START}?returnTo=${encodeURIComponent(target)}`;
+}
+
 /** 조용한 시도의 시작 주소. 시도했다는 표시를 먼저 남긴다. */
 export function silentSsoStartUrl(
   returnTo: string,
   open: StorageOpener = defaultStorage,
 ): string {
   writeFlag(ATTEMPTED_KEY, true, open);
-  return `/api/v1/auth/oidc/start?prompt=none&returnTo=${encodeURIComponent(safeReturnTo(returnTo))}`;
+  return `${OIDC_START}?prompt=none&returnTo=${encodeURIComponent(safeReturnTo(returnTo))}`;
 }
 
 /**

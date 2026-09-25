@@ -1,6 +1,7 @@
 import { CircularProgress, Box } from "@mui/material";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useAuth } from "./auth";
+import { loginPathFor } from "./lib/silentSso";
 import { AppShell } from "./components/AppShell";
 import { LoginPage } from "./pages/LoginPage";
 import { SeatMapPage } from "./pages/SeatMapPage";
@@ -14,7 +15,15 @@ import { UsersPage } from "./pages/UsersPage";
 
 function Protected() {
   const { user } = useAuth();
-  return user ? <AppShell /> : <Navigate to="/login" replace />;
+  const location = useLocation();
+  // 보려던 자리를 로그인 주소에 실어 둔다. 그러지 않으면 링크로 공유받은
+  // 깊은 링크가 여기서 사라지고, 로그인해도 첫 화면으로 떨어진다.
+  // 읽는 쪽은 LoginPage 의 returnToFrom 이다.
+  return user ? (
+    <AppShell />
+  ) : (
+    <Navigate to={loginPathFor(location.pathname, location.search)} replace />
+  );
 }
 function Manager({
   children,
