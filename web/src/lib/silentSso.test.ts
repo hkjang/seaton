@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   clearSilentSsoState,
+  loginPathFor,
   markSignedOut,
+  returnToFrom,
   safeReturnTo,
   shouldAttemptSilentSso,
   silentSsoStartUrl,
+  ssoStartUrl,
   type StorageOpener,
 } from "./silentSso";
 
@@ -118,5 +121,62 @@ describe("silentSsoStartUrl", () => {
     expect(safeReturnTo("/\\evil.example")).toBe("/");
     expect(safeReturnTo("https://evil.example/")).toBe("/");
     expect(safeReturnTo("")).toBe("/");
+  });
+});
+
+// 주소를 짓는 쪽(App 의 Protected)과 읽는 쪽(LoginPage)이 같은 규칙을 쓰는지는
+// 왕복으로만 알 수 있다. 두 곳이 각자 문자열을 지으면 한쪽만 고쳐도 테스트가
+// 통과해 버린다.
+describe("로그인 주소의 returnTo 왕복", () => {
+  const roundTrip = (pathname: string, search = "") =>
+    returnToFrom(new URL(loginPathFor(pathname, search), "http://seaton.test").search);
+
+  it("깊은 링크는 쿼리째 보존된다", () => {
+    expect(loginPathFor("/admin/maps", "")).toBe("/login?returnTo=%2Fadmin%2Fmaps");
+    expect(roundTrip("/admin/maps")).toBe("/admin/maps");
+    expect(roundTrip("/admin/maps", "?floor=3")).toBe("/admin/maps?floor=3");
+    expect(roundTrip("/profile/keys", "?q=%EA%B0%9C%EB%B0%9C")).toBe(
+      "/profile/keys?q=%EA%B0%9C%EB%B0%9C",
+    );
+    // 좌석맵은 기본 경로에서 map·q·edit 를 읽는다(SeatMapPage). 경로가 '/' 여도
+    // 쿼리가 있으면 그것은 공유된 깊은 링크이므로 버리지 않는다.
+    expect(roundTrip("/", "?map=abc&q=%EA%B9%80")).toBe("/?map=abc&q=%EA%B9%80");
+  });
+
+  it("기본 경로에서 밀려난 경우에는 returnTo 를 붙이지 않는다", () => {
+    // helpers.ts 의 login() 과 '/' 진입이 지금 그대로 돌아야 한다. 로그인 뒤
+    // 주소에 '/login' 이 남으면 모든 E2E 가 멎는다.
+    expect(loginPathFor("/", "")).toBe("/login");
+    expect(loginPathFor("/")).toBe("/login");
+    expect(returnToFrom("")).toBe("/");
+    expect(returnToFrom("?error=state")).toBe("/");
+  });
+
+  it("로그인 화면 자신은 returnTo 가 되지 않는다", () => {
+    // returnTo=/login 이면 로그인 성공 뒤 다시 로그인 화면으로 돌아가 멎는다.
+    expect(loginPathFor("/login", "?returnTo=%2Flogin")).toBe("/login");
+    expect(returnToFrom("?returnTo=%2Flogin")).toBe("/");
+    expect(returnToFrom("?returnTo=%2Flogin%3FreturnTo%3D%252Flogin")).toBe("/");
+  });
+
+  it("밖으로 나가는 값은 짓는 쪽과 읽는 쪽 모두에서 '/' 로 접힌다", () => {
+    for (const bad of ["//evil.example", "https://evil.example", "/\\evil"]) {
+      expect(loginPathFor(bad, "")).toBe("/login");
+      expect(returnToFrom(`?returnTo=${encodeURIComponent(bad)}`)).toBe("/");
+    }
+  });
+});
+
+describe("ssoStartUrl", () => {
+  it("returnTo 가 있으면 들고 가고, 없으면 파라미터 없이 출발한다", () => {
+    expect(ssoStartUrl("/")).toBe("/api/v1/auth/oidc/start");
+    expect(ssoStartUrl("/admin/maps?floor=3")).toBe(
+      "/api/v1/auth/oidc/start?returnTo=%2Fadmin%2Fmaps%3Ffloor%3D3",
+    );
+    expect(ssoStartUrl("https://evil.example")).toBe("/api/v1/auth/oidc/start");
+  });
+
+  it("조용한 시도와 달리 prompt 를 붙이지 않는다", () => {
+    expect(ssoStartUrl("/admin/maps")).not.toContain("prompt");
   });
 });
