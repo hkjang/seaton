@@ -71,6 +71,11 @@ import {
 } from "../lib/mapView";
 import { readableInk } from "../lib/color";
 import {
+  readSeatMapParams,
+  seatSearchKey,
+  writeSeatMapParams,
+} from "../lib/seatMapLink";
+import {
   type ColorMode,
   commonSeatPrefix,
   deriveGrid,
@@ -321,7 +326,7 @@ const keyboardTargetsMap = (event: KeyboardEvent) => {
 export function SeatMapPage() {
   const { user } = useAuth(),
     navigate = useNavigate(),
-    [searchParams] = useSearchParams();
+    [searchParams, setSearchParams] = useSearchParams();
   const manager =
     user?.role === "seat_manager" || user?.role === "system_admin";
   const [buildings, setBuildings] = useState<Building[]>([]),
@@ -347,7 +352,7 @@ export function SeatMapPage() {
     // 범례에서 조직을 누르면 그 조직 좌석만 도드라진다.
     [activeOrg, setActiveOrg] = useState<string | null>(null);
   const [editMode, setEditMode] = useState(
-      Boolean(manager && searchParams.get("edit") === "1"),
+      Boolean(manager && readSeatMapParams(searchParams).edit),
     ),
     [snapEnabled, setSnapEnabled] = useState(true),
     [selectedIds, setSelectedIds] = useState<Set<string>>(new Set()),
@@ -380,9 +385,8 @@ export function SeatMapPage() {
       setFloors(f.items);
       setMaps(m.items);
       setOrganizations(o.items);
-      const requestedMap = m.items.find(
-        (item) => item.id === searchParams.get("map"),
-      );
+      const requestedMapId = readSeatMapParams(searchParams).mapId;
+      const requestedMap = m.items.find((item) => item.id === requestedMapId);
       const requestedFloor = f.items.find(
         (item) => item.id === requestedMap?.floorId,
       );
@@ -633,8 +637,19 @@ export function SeatMapPage() {
       "";
     void chooseMap(mid);
   };
+  /**
+   * 주소를 화면 상태에 맞춘다. 히스토리는 더럽히지 않고(replace), 값이 그대로면
+   * 아예 쓰지 않는다 — chooseMap 은 배정·저장 뒤 새로고침 용도로 같은 도면 id 로
+   * 다시 불리므로, 그때마다 주소를 쓰면 의미 없는 이동이 쌓인다.
+   */
+  const syncParams = (next: { mapId?: string; query?: string }) => {
+    const params = writeSeatMapParams(searchParams, next);
+    if (params.toString() === searchParams.toString()) return;
+    setSearchParams(params, { replace: true });
+  };
   const chooseMap = async (id: string) => {
     setMapId(id);
+    syncParams({ mapId: id });
     setView(FIT_VIEW);
     setActiveOrg(null);
     setSelected(null);
@@ -678,11 +693,15 @@ export function SeatMapPage() {
   };
   const search = (event?: FormEvent) => {
     event?.preventDefault();
+    // 주소에 q 를 쓰면 아래 effect 가 깨어나 같은 검색을 한 번 더 보낸다.
+    // 같은 키를 먼저 세워 두어 그 effect 가 조용히 지나가게 한다.
+    lastSearchRef.current = seatSearchKey(mapId, query);
+    syncParams({ query });
     void runSearch(query);
   };
   useEffect(() => {
-    const term = searchParams.get("q")?.trim();
-    const key = `${mapId}:${term}`;
+    const term = readSeatMapParams(searchParams).query;
+    const key = seatSearchKey(mapId, term);
     // 좌석이 도착하기 전에 검색하면 결과 좌석을 찾지 못해 이동이 조용히 무산된다.
     // mapId 는 좌석 조회보다 먼저 정해지므로 좌석이 실릴 때까지 기다린다.
     if (!term || !mapId || !seats.length || key === lastSearchRef.current)
@@ -740,7 +759,7 @@ export function SeatMapPage() {
         // 생성은 null로 미지정, 수정은 빈 문자열로 기존 구역을 해제한다.
         organizationId: editor.id
           ? (editor.organizationId ?? "")
-          : (editor.organizationId || null),
+          : editor.organizationId || null,
         type: editor.type,
         status: editor.status,
         x: Number(editor.x),
