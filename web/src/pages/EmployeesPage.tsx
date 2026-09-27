@@ -30,6 +30,13 @@ import ArrowForwardRounded from "@mui/icons-material/ArrowForwardRounded";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { MetricCard, PageHeader, TableSkeleton } from "../components/AdminUI";
+import { localDateStamp, safeFileName, toCSV } from "../lib/format";
+import {
+  EMPLOYEE_CSV_HEADERS,
+  employeeCsvRows,
+  employeeSeatLabel,
+  employeeStatusLabel,
+} from "../lib/employeeExport";
 import type { BulkFailure, Employee } from "../types";
 
 export function EmployeesPage() {
@@ -128,6 +135,23 @@ export function EmployeesPage() {
     link.click();
     URL.revokeObjectURL(url);
   };
+  // 조회 결과를 그대로 파일로 넘긴다. 이력 화면과 달리 다시 조회하지 않는다 —
+  // 서버가 한 번에 500명까지만 주고 전체 건수도 돌려주지 않으므로, 다시
+  // 조회해도 더 받을 것이 없고 "표에 보이는 것과 파일이 같다"는 것만 잃는다.
+  const exportCsv = () => {
+    const csv = toCSV(EMPLOYEE_CSV_HEADERS, employeeCsvRows(items));
+    const url = URL.createObjectURL(
+      new Blob([csv], { type: "text/csv;charset=utf-8;" }),
+    );
+    const link = document.createElement("a");
+    link.href = url;
+    // 파일 이름은 사용자 시간대의 날짜를 쓴다. UTC 날짜를 쓰면 하루 어긋난
+    // 이름이 붙는다. 이력 화면(HistoryPage.exportCsv)과 같은 꼴이다.
+    link.download = safeFileName(`직원목록_${localDateStamp()}.csv`);
+    link.click();
+    URL.revokeObjectURL(url);
+    setMessage(`${items.length}명을 내보냈습니다.`);
+  };
   const counts = useMemo(
     () => ({
       active: items.filter((item) => item.status === "active").length,
@@ -146,6 +170,14 @@ export function EmployeesPage() {
         description="인사 연동 결과와 좌석 배정 상태를 확인하고, 예외 직원만 빠르게 처리합니다."
         actions={
           <Stack direction="row" spacing={1}>
+            <Button
+              variant="outlined"
+              startIcon={<DownloadRounded />}
+              onClick={exportCsv}
+              disabled={!items.length || loading}
+            >
+              CSV 내보내기
+            </Button>
             <Button
               variant="outlined"
               startIcon={<DownloadRounded />}
@@ -385,16 +417,10 @@ export function EmployeesPage() {
                       size="small"
                       variant={employee.seatNo ? "filled" : "outlined"}
                       color={employee.seatNo ? "primary" : "warning"}
-                      label={employee.seatNo || "미배정"}
+                      label={employeeSeatLabel(employee.seatNo)}
                     />
                   </TableCell>
-                  <TableCell>
-                    {employee.status === "active"
-                      ? "재직"
-                      : employee.status === "leave"
-                        ? "휴직"
-                        : "퇴직"}
-                  </TableCell>
+                  <TableCell>{employeeStatusLabel(employee.status)}</TableCell>
                   <TableCell align="right">
                     <Button
                       size="small"
