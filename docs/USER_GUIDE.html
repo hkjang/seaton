@@ -175,8 +175,9 @@
         <p>어떤 엔진을 쓸지는 시스템 관리자가 정합니다. 엔진별 차이는 관리자 가이드의 "좌석 인식 엔진" 절을 보십시오.</p>
         <h3>3.4 직원</h3>
         <p>주소 <code>/admin/employees</code>. 좌석 관리자 이상. 재직자·좌석 배정·미배정 집계와 직원 목록입니다. 이름·사번·이메일·조직으로 검색하고 재직 상태·배정 상태로 거릅니다.</p>
-        <figure><img src="assets/guide/admin-employees.png" alt="직원 — 조회된 재직자·좌석 배정·미배정 집계, 검색과 상태 필터, 직원 목록. 오른쪽 위에 직원 양식·배정 양식·좌석 일괄 배정·직원 가져오기" loading="lazy"><figcaption>직원 — 조회된 재직자·좌석 배정·미배정 집계, 검색과 상태 필터, 직원 목록. 오른쪽 위에 직원 양식·배정 양식·좌석 일괄 배정·직원 가져오기</figcaption></figure>
+        <figure><img src="assets/guide/admin-employees.png" alt="직원 — 조회된 재직자·좌석 배정·미배정 집계, 검색과 상태 필터, 직원 목록. 오른쪽 위에 CSV 내보내기·직원 양식·배정 양식·좌석 일괄 배정·직원 가져오기" loading="lazy"><figcaption>직원 — 조회된 재직자·좌석 배정·미배정 집계, 검색과 상태 필터, 직원 목록. 오른쪽 위에 CSV 내보내기·직원 양식·배정 양식·좌석 일괄 배정·직원 가져오기</figcaption></figure>
         <ul>
+            <li><strong>CSV 내보내기</strong>: 지금 조회된 목록을 그대로 <code>직원목록_2026-09-27.csv</code>처럼 내려받습니다. 검색어와 재직 상태·배정 상태 필터가 적용된 결과이므로 표에 보이는 행이 그대로 파일이 됩니다(예: 배정 상태를 <code>미배정</code>으로 걸러 미배정자 명단만 받기). 열은 이름·사번·이메일·조직명·직급·직책·근무지·좌석·재직상태입니다. 좌석을 뺀 열 이름은 <strong>직원 가져오기</strong>가 읽는 이름과 같아 파일을 고쳐 그대로 다시 올릴 수 있습니다(좌석 열은 가져오기가 읽지 않고, 좌석을 바꾸려면 <strong>좌석 일괄 배정</strong>을 씁니다). 목록이 비었으면 누를 수 없습니다.</li>
             <li><strong>직원 양식</strong> / <strong>배정 양식</strong>: 가져오기에 쓰는 CSV 양식을 내려받습니다.</li>
             <li><strong>직원 가져오기</strong>: 인사 CSV/XLSX를 올려 직원을 만들거나 갱신합니다.</li>
             <li><strong>좌석 일괄 배정</strong>: 사번과 좌석 번호 두 열짜리 CSV/XLSX로 배정합니다. 결과는 <code>1건 배정, 2건 확인 필요</code>처럼 요약되고, 반영되지 않은 행은 행 번호와 사유(<code>사번을 찾을 수 없습니다</code>, <code>이미 다른 직원에게 배정된 좌석입니다</code>)가 목록으로 나옵니다.</li>
@@ -199,7 +200,7 @@
         <figure><img src="assets/guide/profile-keys-create.png" alt="개인 API 키 만들기 — 키 이름을 적고 read·write·mcp 범위를 고른다" loading="lazy"><figcaption>개인 API 키 만들기 — 키 이름을 적고 read·write·mcp 범위를 고른다</figcaption></figure>
         <figure><img src="assets/guide/profile-keys-created.png" alt="지금 키를 복사하세요 — 키 원문은 이 창에서 한 번만 표시된다(그림에서는 가렸다)" loading="lazy"><figcaption>지금 키를 복사하세요 — 키 원문은 이 창에서 한 번만 표시된다(그림에서는 가렸다)</figcaption></figure>
         <figure><img src="assets/guide/profile-keys.png" alt="내 API 키 목록 — 상태, 범위, 버전, 마지막 사용, 만료와 회전·폐기 단추. 아래에 MCP 엔드포인트 주소" loading="lazy"><figcaption>내 API 키 목록 — 상태, 범위, 버전, 마지막 사용, 만료와 회전·폐기 단추. 아래에 MCP 엔드포인트 주소</figcaption></figure>
-        <ol start="14">
+        <ol start="15">
             <li><strong>키 만들기</strong>를 누르고 이름과 범위(<code>read</code>, <code>write</code>, <code>mcp</code>)를 정합니다. 범위를 벗어난 요청은 <code>403</code>으로 막힙니다. <code>read</code> 키로는 데이터를 바꿀 수 없고, <code>mcp</code> 범위가 없으면 MCP 연결도 되지 않습니다.</li>
             <li><strong>생성</strong> 직후 <code>seat_...</code> 형식의 키 원문이 한 번만 표시됩니다. <strong>복사</strong>해 안전한 곳에 두고 <strong>보관 완료</strong>를 누릅니다. 서버는 해시만 저장하므로 원문은 다시 볼 수 없습니다.</li>
             <li>목록의 <strong>상태</strong>는 사용 중 · 회전 유예 · 폐기됨 중 하나입니다. <strong>만료</strong>는 관리자가 정한 기본 유효기간(기본 90일)으로 계산됩니다.</li>
