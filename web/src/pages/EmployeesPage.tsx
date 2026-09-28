@@ -37,14 +37,17 @@ import {
   employeeSeatLabel,
   employeeStatusLabel,
 } from "../lib/employeeExport";
-import type { BulkFailure, Employee } from "../types";
+import { employeeQuery } from "../lib/employeeQuery";
+import type { BulkFailure, Employee, Organization } from "../types";
 
 export function EmployeesPage() {
   const navigate = useNavigate();
   const [items, setItems] = useState<Employee[]>([]),
+    [organizations, setOrganizations] = useState<Organization[]>([]),
     [q, setQ] = useState(""),
     [status, setStatus] = useState(""),
     [assignment, setAssignment] = useState(""),
+    [organizationId, setOrganizationId] = useState(""),
     [loading, setLoading] = useState(true),
     [message, setMessage] = useState(""),
     [error, setError] = useState("");
@@ -52,13 +55,16 @@ export function EmployeesPage() {
     query = q,
     nextStatus = status,
     nextAssignment = assignment,
+    nextOrganizationId = organizationId,
   ) => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({ limit: "500" });
-      if (query) params.set("q", query);
-      if (nextStatus) params.set("status", nextStatus);
-      if (nextAssignment) params.set("assignment", nextAssignment);
+      const params = employeeQuery({
+        q: query,
+        status: nextStatus,
+        assignment: nextAssignment,
+        organizationId: nextOrganizationId,
+      });
       const data = await api<{ items: Employee[] }>(
         `/api/v1/employees?${params}`,
       );
@@ -70,8 +76,15 @@ export function EmployeesPage() {
     }
   };
   useEffect(() => {
-    void load("", "", "");
+    void load("", "", "", "");
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // 조직 필터의 선택지. 조직을 못 읽어도 직원 목록은 그대로 보여야 하므로
+  // 이 실패는 화면에 올리지 않는다 — 조직 Select 만 "전체 조직" 하나로 남는다.
+  useEffect(() => {
+    void api<{ items: Organization[] }>("/api/v1/organizations")
+      .then((data) => setOrganizations(data.items))
+      .catch(() => setOrganizations([]));
+  }, []);
   const search = (event: FormEvent) => {
     event.preventDefault();
     void load();
@@ -320,9 +333,10 @@ export function EmployeesPage() {
             <Select
               value={status}
               displayEmpty
+              inputProps={{ "aria-label": "재직상태 필터" }}
               onChange={(event) => {
                 setStatus(event.target.value);
-                void load(q, event.target.value, assignment);
+                void load(q, event.target.value, assignment, organizationId);
               }}
             >
               <MenuItem value="">전체 재직상태</MenuItem>
@@ -335,14 +349,33 @@ export function EmployeesPage() {
             <Select
               value={assignment}
               displayEmpty
+              inputProps={{ "aria-label": "배정상태 필터" }}
               onChange={(event) => {
                 setAssignment(event.target.value);
-                void load(q, status, event.target.value);
+                void load(q, status, event.target.value, organizationId);
               }}
             >
               <MenuItem value="">전체 배정상태</MenuItem>
               <MenuItem value="assigned">배정</MenuItem>
               <MenuItem value="unassigned">미배정</MenuItem>
+            </Select>
+          </FormControl>
+          <FormControl sx={{ minWidth: 160 }}>
+            <Select
+              value={organizationId}
+              displayEmpty
+              inputProps={{ "aria-label": "조직 필터" }}
+              onChange={(event) => {
+                setOrganizationId(event.target.value);
+                void load(q, status, assignment, event.target.value);
+              }}
+            >
+              <MenuItem value="">전체 조직</MenuItem>
+              {organizations.map((organization) => (
+                <MenuItem key={organization.id} value={organization.id}>
+                  {organization.name}
+                </MenuItem>
+              ))}
             </Select>
           </FormControl>
           <Button type="submit" variant="outlined">
