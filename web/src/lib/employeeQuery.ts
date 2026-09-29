@@ -33,22 +33,49 @@ export interface EmployeeFilters {
   organizationId?: string;
 }
 
-/**
- * 주어진 필터로 `GET /api/v1/employees` 의 쿼리를 짓는다.
- *
- * 빈 값(공백만 있는 것도 포함)은 키를 아예 넣지 않는다. 서버는 `$1=''` 로 빈
- * 값을 전체로 치므로 넣어도 결과는 같지만, 키가 없으면 주소가 짧아 어떤 조건이
- * 걸려 있는지 눈으로 읽힌다.
- */
-export function employeeQuery(filters: EmployeeFilters): URLSearchParams {
-  const params = new URLSearchParams({ limit: EMPLOYEE_QUERY_LIMIT });
-  const put = (key: string, value: string | undefined) => {
-    const trimmed = value?.trim();
-    if (trimmed) params.set(key, trimmed);
+const filterKeys = ["q", "organizationId", "status", "assignment"] as const;
+
+function normalize(filters: EmployeeFilters): Required<EmployeeFilters> {
+  const status = filters.status?.trim() ?? "";
+  const assignment = filters.assignment?.trim() ?? "";
+  return {
+    q: filters.q?.trim() ?? "",
+    organizationId: filters.organizationId?.trim() ?? "",
+    status: ["active", "leave", "retired"].includes(status) ? status : "",
+    assignment: ["assigned", "unassigned"].includes(assignment)
+      ? assignment
+      : "",
   };
-  put("q", filters.q);
-  put("organizationId", filters.organizationId);
-  put("status", filters.status);
-  put("assignment", filters.assignment);
-  return params;
+}
+
+/** 주소의 네 필터를 읽는다. 모르는 enum은 전체로 취급한다. */
+export function readEmployeeParams(
+  params: URLSearchParams,
+): Required<EmployeeFilters> {
+  return normalize(
+    Object.fromEntries(filterKeys.map((key) => [key, params.get(key) ?? ""])),
+  );
+}
+
+/** 원본과 모르는 키를 보존한다. undefined는 유지, 빈 값은 해당 키 삭제. */
+export function writeEmployeeParams(
+  params: URLSearchParams,
+  filters: EmployeeFilters,
+): URLSearchParams {
+  const next = new URLSearchParams(params);
+  const normalized = normalize(filters);
+  for (const key of filterKeys) {
+    if (filters[key] === undefined) continue;
+    if (normalized[key]) next.set(key, normalized[key]);
+    else next.delete(key);
+  }
+  return next;
+}
+
+/** API는 같은 정규화 규칙을 쓰되 주소의 limit이나 모르는 키를 받지 않는다. */
+export function employeeQuery(filters: EmployeeFilters): URLSearchParams {
+  return writeEmployeeParams(
+    new URLSearchParams({ limit: EMPLOYEE_QUERY_LIMIT }),
+    filters,
+  );
 }
