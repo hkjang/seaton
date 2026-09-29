@@ -27,7 +27,7 @@ import GroupsRounded from "@mui/icons-material/GroupsRounded";
 import EventSeatRounded from "@mui/icons-material/EventSeatRounded";
 import PersonOffRounded from "@mui/icons-material/PersonOffRounded";
 import ArrowForwardRounded from "@mui/icons-material/ArrowForwardRounded";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { MetricCard, PageHeader, TableSkeleton } from "../components/AdminUI";
 import { localDateStamp, safeFileName, toCSV } from "../lib/format";
@@ -37,34 +37,30 @@ import {
   employeeSeatLabel,
   employeeStatusLabel,
 } from "../lib/employeeExport";
-import { employeeQuery } from "../lib/employeeQuery";
+import {
+  employeeQuery,
+  readEmployeeParams,
+  writeEmployeeParams,
+  type EmployeeFilters,
+} from "../lib/employeeQuery";
 import type { BulkFailure, Employee, Organization } from "../types";
 
 export function EmployeesPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { status, assignment, organizationId } =
+    readEmployeeParams(searchParams);
   const [items, setItems] = useState<Employee[]>([]),
     [organizations, setOrganizations] = useState<Organization[]>([]),
-    [q, setQ] = useState(""),
-    [status, setStatus] = useState(""),
-    [assignment, setAssignment] = useState(""),
-    [organizationId, setOrganizationId] = useState(""),
+    [q, setQ] = useState(() => readEmployeeParams(searchParams).q),
     [loading, setLoading] = useState(true),
     [message, setMessage] = useState(""),
     [error, setError] = useState("");
-  const load = async (
-    query = q,
-    nextStatus = status,
-    nextAssignment = assignment,
-    nextOrganizationId = organizationId,
-  ) => {
+  // 가져오기 뒤에도 입력 중인 q가 아닌 주소의 확정 조건으로 재조회한다.
+  const load = async (filters = readEmployeeParams(searchParams)) => {
     setLoading(true);
     try {
-      const params = employeeQuery({
-        q: query,
-        status: nextStatus,
-        assignment: nextAssignment,
-        organizationId: nextOrganizationId,
-      });
+      const params = employeeQuery(filters);
       const data = await api<{ items: Employee[] }>(
         `/api/v1/employees?${params}`,
       );
@@ -76,18 +72,37 @@ export function EmployeesPage() {
     }
   };
   useEffect(() => {
-    void load("", "", "", "");
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    const filters = readEmployeeParams(searchParams);
+    setQ(filters.q);
+    void load(filters);
+  }, [searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
   // 조직 필터의 선택지. 조직을 못 읽어도 직원 목록은 그대로 보여야 하므로
-  // 이 실패는 화면에 올리지 않는다 — 조직 Select 만 "전체 조직" 하나로 남는다.
+  // 이 실패는 화면에 올리지 않는다. URL의 조직은 임시 항목으로 보존한다.
   useEffect(() => {
     void api<{ items: Organization[] }>("/api/v1/organizations")
       .then((data) => setOrganizations(data.items))
       .catch(() => setOrganizations([]));
   }, []);
+  const applyFilters = (patch: EmployeeFilters = {}) => {
+    const next = writeEmployeeParams(searchParams, {
+      q,
+      status,
+      assignment,
+      organizationId,
+      ...patch,
+    });
+    if (next.toString() === searchParams.toString()) {
+      // 같은 조건 재제출도 서버에서 다시 읽는다. 주소가 달라지면 effect만 조회한다.
+      const filters = readEmployeeParams(next);
+      setQ(filters.q);
+      void load(filters);
+    } else {
+      setSearchParams(next, { replace: true });
+    }
+  };
   const search = (event: FormEvent) => {
     event.preventDefault();
-    void load();
+    applyFilters();
   };
   const upload = async (file?: File) => {
     if (!file) return;
@@ -335,8 +350,7 @@ export function EmployeesPage() {
               displayEmpty
               inputProps={{ "aria-label": "재직상태 필터" }}
               onChange={(event) => {
-                setStatus(event.target.value);
-                void load(q, event.target.value, assignment, organizationId);
+                applyFilters({ status: event.target.value });
               }}
             >
               <MenuItem value="">전체 재직상태</MenuItem>
@@ -351,8 +365,7 @@ export function EmployeesPage() {
               displayEmpty
               inputProps={{ "aria-label": "배정상태 필터" }}
               onChange={(event) => {
-                setAssignment(event.target.value);
-                void load(q, status, event.target.value, organizationId);
+                applyFilters({ assignment: event.target.value });
               }}
             >
               <MenuItem value="">전체 배정상태</MenuItem>
@@ -366,11 +379,14 @@ export function EmployeesPage() {
               displayEmpty
               inputProps={{ "aria-label": "조직 필터" }}
               onChange={(event) => {
-                setOrganizationId(event.target.value);
-                void load(q, status, assignment, event.target.value);
+                applyFilters({ organizationId: event.target.value });
               }}
             >
               <MenuItem value="">전체 조직</MenuItem>
+              {organizationId &&
+                !organizations.some((org) => org.id === organizationId) && (
+                  <MenuItem value={organizationId}>{organizationId}</MenuItem>
+                )}
               {organizations.map((organization) => (
                 <MenuItem key={organization.id} value={organization.id}>
                   {organization.name}
