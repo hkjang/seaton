@@ -1,11 +1,14 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 func (s *Server) listOrganizations(w http.ResponseWriter, r *http.Request) {
@@ -106,6 +109,23 @@ func (s *Server) saveEmployee(r *http.Request, in *employeeInput) (string, error
 	if in.Status == "" {
 		in.Status = "active"
 	}
+	// 조직명 없이 조직코드만 적은 행도 소속을 지정할 수 있어야 한다. 직원 양식과
+	// USER_GUIDE 3.4 절이 "조직을 바꿀 때는 조직코드가 있는 양식을 쓰라"고 안내하는데,
+	// 아래 분기는 조직명이 함께 있을 때만 조직을 찾아 코드만 적은 행이 소속 없이
+	// 저장됐다 — 가져오기는 "반영"이라 보고하면서 직원의 소속을 조용히 지웠다.
+	// 이름이 없으면 새 조직을 만들 수 없으므로 코드로 기존 조직을 찾고, 찾지 못한
+	// 코드는 오류로 되돌린다. 조용히 NULL로 두면 같은 침묵이 되기 때문이다.
+	if in.OrganizationID == nil && in.OrganizationName == "" && in.OrganizationExternalID != "" {
+		var orgID string
+		err := s.db.QueryRow(r.Context(), `SELECT id FROM organizations WHERE external_id=$1`, in.OrganizationExternalID).Scan(&orgID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", fmt.Errorf("조직코드 %s 에 해당하는 조직이 없습니다", in.OrganizationExternalID)
+		}
+		if err != nil {
+			return "", err
+		}
+		in.OrganizationID = &orgID
+	}
 	if in.OrganizationID == nil && in.OrganizationName != "" {
 		orgID := newID()
 		external := in.OrganizationExternalID
@@ -175,12 +195,13 @@ func (s *Server) importEmployees(w http.ResponseWriter, r *http.Request) {
 		} else if in.Status == "퇴직" {
 			in.Status = "retired"
 		}
+		// 어느 행이 왜 걸렸는지 화면이 보여줄 수 있도록 사번도 함께 돌려준다.
 		if in.EmployeeNo == "" || in.Name == "" {
-			failures = append(failures, map[string]any{"row": i + 2, "error": "사번/이름 누락"})
+			failures = append(failures, map[string]any{"row": i + 2, "employeeNo": in.EmployeeNo, "error": "사번/이름 누락"})
 			continue
 		}
 		if _, err := s.saveEmployee(r, &in); err != nil {
-			failures = append(failures, map[string]any{"row": i + 2, "error": err.Error()})
+			failures = append(failures, map[string]any{"row": i + 2, "employeeNo": in.EmployeeNo, "error": err.Error()})
 		} else {
 			success++
 		}

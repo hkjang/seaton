@@ -131,10 +131,13 @@ export interface Organization {
   color: string;
 }
 
-/** 좌석 일괄 배정에서 반영되지 않은 행. */
+/**
+ * 가져오기에서 반영되지 않은 행. 좌석 일괄 배정과 직원 가져오기가 같은 모양으로
+ * 돌려준다. 직원 가져오기의 실패 행에는 좌석이 없으므로 좌석 번호는 없을 수 있다.
+ */
 export type BulkFailure = {
   row: number;
-  employeeNo: string;
-  seatNo: string;
+  employeeNo?: string;
+  seatNo?: string;
   error: string;
 };

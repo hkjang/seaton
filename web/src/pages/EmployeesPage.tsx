@@ -114,24 +114,31 @@ export function EmployeesPage() {
     event.preventDefault();
     applyFilters();
   };
+  // 반영되지 않은 행. 직원 가져오기와 좌석 일괄 배정이 같은 목록을 쓴다 — 어느 행이
+  // 왜 걸렸는지 보여 주지 않으면 관리자가 파일을 고칠 수 없다.
+  const [failures, setFailures] = useState<BulkFailure[]>([]);
   const upload = async (file?: File) => {
     if (!file) return;
     const form = new FormData();
     form.append("file", file);
+    setFailures([]);
     try {
-      const result = await api<{ success: number; failed: number }>(
-        "/api/v1/employees/import",
-        { method: "POST", body: form },
-      );
+      const result = await api<{
+        success: number;
+        failed: number;
+        failures?: BulkFailure[];
+      }>("/api/v1/employees/import", { method: "POST", body: form });
       setMessage(`${result.success}명 반영, ${result.failed}건 확인 필요`);
+      // 좌석 일괄 배정과 같은 목록으로 사유를 보여준다. 건수만 알려주면 관리자가
+      // 파일의 어느 행을 어떻게 고쳐야 하는지 알 수 없다.
+      setFailures(result.failures ?? []);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "가져오기에 실패했습니다");
     }
   };
   // 좌석 일괄 배정. 서버는 사번과 좌석 번호 두 열만 읽고, 실패한 행은 이유와 함께
-  // 돌려준다. 어느 행이 왜 걸렸는지 보여 주지 않으면 관리자가 파일을 고칠 수 없다.
-  const [failures, setFailures] = useState<BulkFailure[]>([]);
+  // 돌려준다.
   const assignFromFile = async (file?: File) => {
     if (!file) return;
     const form = new FormData();
@@ -285,8 +292,10 @@ export function EmployeesPage() {
             {failures.slice(0, 20).map((item) => (
               <li key={`${item.row}-${item.seatNo}`}>
                 <Typography variant="caption">
-                  {item.row}행 · {item.employeeNo || "사번 없음"} →{" "}
-                  {item.seatNo || "좌석 없음"} · {item.error}
+                  {item.row}행 · {item.employeeNo || "사번 없음"}
+                  {/* 직원 가져오기의 실패 행에는 좌석이 없다. 그 행까지 "좌석 없음"
+                      이라고 적으면 좌석을 요구한 것처럼 읽힌다. */}
+                  {item.seatNo ? ` → ${item.seatNo}` : ""} · {item.error}
                 </Typography>
               </li>
             ))}
