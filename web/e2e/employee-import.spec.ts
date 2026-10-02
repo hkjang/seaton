@@ -18,6 +18,15 @@ import { csrfToken, login } from "./helpers";
  *    `saveEmployee`는 `조직명`이 함께 있을 때만 조직을 찾아 코드만 적은 행이
  *    소속 없이 저장된다 — 가져오기는 "반영"이라 보고하면서 소속을 지운다.
  *
+ * ③ 가져오기가 조직을 만들거나 고치지 않는다는 것. 양식은 `조직코드`와 `조직명`
+ *    두 열을 모두 채워 주므로 가장 흔한 파일에는 둘이 함께 있다. 예전
+ *    `saveEmployee`는 조직명이 있으면 external_id 를 `import:<조직명>` 으로 지어
+ *    넣고 `ON CONFLICT(external_id) DO UPDATE SET name` 까지 했다. 그래서 오타 난
+ *    조직코드는 새 조직을 만들어 직원을 그리로 옮기고, 오타 난 조직명 한 줄은
+ *    기존 조직의 이름을 전사적으로 바꾸고, 조직코드 열이 없는 내보낸 직원목록은
+ *    이름이 같은 중복 조직을 만들었다. 모두 revert 로 돌아오지 않는 DB 변경이라
+ *    여기서 조직 목록까지 확인한다.
+ *
  * 실제 서버·실제 화면으로 본다. 시드 직원 한 명의 정보를 실제로 바꾸므로
  * `keepingEmployee`가 원래 값을 그대로 돌려놓는다 — 되돌리지 않으면 "인사팀 2명"을
  * 전제로 하는 다른 검증이 엉뚱한 이유로 깨진다.
@@ -88,6 +97,21 @@ const keepingEmployee = async (
     });
   }
 };
+
+type OrganizationRecord = { id: string; externalId: string; name: string };
+
+const fetchOrganizations = async (page: Page) => {
+  const found = await (await page.request.get("/api/v1/organizations")).json();
+  return found.items as OrganizationRecord[];
+};
+
+/**
+ * 조직 목록이 가져오기 전후로 똑같은지 본다. 가져오기는 조직을 만들거나 이름을
+ * 바꾸지 않아야 하므로, 코드·이름 쌍을 통째로 비교한다 — 개수만 세면 이름이
+ * 바뀐 것을 놓친다.
+ */
+const organizationShape = (items: OrganizationRecord[]) =>
+  items.map((org) => `${org.externalId}=${org.name}`).sort();
 
 /** 표에서 한 직원의 행을 집어 '조직' 칸을 읽는다(열 순서: 직원·사번·조직·…). */
 const organizationCell = async (page: Page, employeeNo: string) => {
@@ -161,6 +185,118 @@ test.describe("직원 가져오기", () => {
       await expect(await organizationCell(page, TARGET)).toHaveText("인사팀");
       const after = await fetchEmployee(page, TARGET);
       expect(after.organizationName).toBe("인사팀");
+    });
+  });
+
+  test("양식 그대로 두 조직 열을 채운 행의 조직코드가 없으면 조직을 만들지 않는다", async ({
+    page,
+  }) => {
+    await keepingEmployee(page, TARGET, async (before) => {
+      const organizations = organizationShape(await fetchOrganizations(page));
+
+      await page.goto("/admin/employees");
+      // 양식(downloadTemplate)이 내려주는 모양: 조직코드와 조직명이 모두 찬 행.
+      await page.setInputFiles(
+        EMPLOYEE_INPUT,
+        csv([
+          "사번,이름,조직코드,조직명",
+          `${TARGET},${before.name},NOSUCHCODE,개발팀`,
+        ]),
+      );
+      await expect(page.getByText(/0명 반영, 1건 확인 필요/)).toBeVisible();
+
+      // 오타 난 코드로 새 조직이 생겨 직원이 그리로 옮겨지면 안 된다.
+      expect(
+        organizationShape(await fetchOrganizations(page)),
+        "조직 목록이 그대로여야 한다",
+      ).toEqual(organizations);
+      await expect(await organizationCell(page, TARGET)).toHaveText("인사팀");
+      expect((await fetchEmployee(page, TARGET)).organizationName).toBe(
+        "인사팀",
+      );
+    });
+  });
+
+  test("조직명만 다른 행은 조직 이름을 바꾸지 않고 조직코드의 조직으로 옮긴다", async ({
+    page,
+  }) => {
+    await keepingEmployee(page, TARGET, async (before) => {
+      const organizations = organizationShape(await fetchOrganizations(page));
+
+      await page.goto("/admin/employees");
+      // 조직코드는 맞고 조직명만 오타인 한 행. 예전에는 이 한 줄이
+      // organizations.name 을 전사적으로 바꿨다.
+      await page.setInputFiles(
+        EMPLOYEE_INPUT,
+        csv([
+          "사번,이름,조직코드,조직명",
+          `${TARGET},${before.name},SALES,영업팁`,
+        ]),
+      );
+      await expect(page.getByText(/1명 반영, 0건 확인 필요/)).toBeVisible();
+
+      expect(
+        organizationShape(await fetchOrganizations(page)),
+        "SALES 조직의 이름이 그대로여야 한다",
+      ).toEqual(organizations);
+      await expect(await organizationCell(page, TARGET)).toHaveText("영업팀");
+      expect((await fetchEmployee(page, TARGET)).organizationName).toBe(
+        "영업팀",
+      );
+    });
+  });
+
+  test("조직코드 열이 없는 내보낸 직원목록을 올려도 중복 조직이 생기지 않는다", async ({
+    page,
+  }) => {
+    await keepingEmployee(page, TARGET, async (before) => {
+      const organizations = organizationShape(await fetchOrganizations(page));
+
+      await page.goto("/admin/employees");
+      // employee-export.spec.ts 가 확인하는 내보내기 파일의 머리글 그대로.
+      await page.setInputFiles(
+        EMPLOYEE_INPUT,
+        csv([
+          "이름,사번,이메일,조직명,직급,직책,근무지,좌석,재직상태",
+          `${before.name},${TARGET},${before.email ?? ""},인사팀,${before.title ?? ""},${before.position ?? ""},${before.workplace ?? ""},미배정,재직`,
+        ]),
+      );
+      await expect(page.getByText(/1명 반영, 0건 확인 필요/)).toBeVisible();
+
+      expect(
+        organizationShape(await fetchOrganizations(page)),
+        "이름이 같은 조직이 새로 생기면 안 된다",
+      ).toEqual(organizations);
+      await expect(await organizationCell(page, TARGET)).toHaveText("인사팀");
+      const after = await fetchEmployee(page, TARGET);
+      expect(after.organizationName).toBe("인사팀");
+      expect(after.organizationId, "같은 조직에 그대로 있어야 한다").toBe(
+        before.organizationId,
+      );
+    });
+  });
+
+  test("없는 조직명만 적은 행은 사유와 함께 남고 소속을 지우지 않는다", async ({
+    page,
+  }) => {
+    await keepingEmployee(page, TARGET, async (before) => {
+      const organizations = organizationShape(await fetchOrganizations(page));
+
+      await page.goto("/admin/employees");
+      await page.setInputFiles(
+        EMPLOYEE_INPUT,
+        csv(["사번,이름,조직명", `${TARGET},${before.name},없는팀`]),
+      );
+      await expect(page.getByText(/0명 반영, 1건 확인 필요/)).toBeVisible();
+      await expect(page.getByText(/없는팀/)).toBeVisible();
+
+      expect(
+        organizationShape(await fetchOrganizations(page)),
+        "조직 목록이 그대로여야 한다",
+      ).toEqual(organizations);
+      expect((await fetchEmployee(page, TARGET)).organizationName).toBe(
+        "인사팀",
+      );
     });
   });
 });
