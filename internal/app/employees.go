@@ -1,11 +1,15 @@
 package app
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 func (s *Server) listOrganizations(w http.ResponseWriter, r *http.Request) {
@@ -96,6 +100,53 @@ type employeeInput struct {
 	Status                 string  `json:"status"`
 }
 
+// findOrganization 은 조직코드(organizations.external_id)나 조직명으로 이미 있는
+// 조직을 찾는다. 찾지 못하면 사람이 파일을 고칠 수 있도록 어느 값이 문제인지
+// 적은 오류를 돌려준다 — 가져오기는 이 문장을 그 행의 사유로 그대로 보여 준다.
+//
+// 조직코드가 있으면 그것만 본다. 함께 적힌 조직명은 쓰지 않는다 — 이름이 다르다고
+// 기존 조직의 이름을 바꾸면 한 행의 오타가 전사의 조직 이름을 바꾸기 때문이다.
+// 조직명만 있으면 이름으로 찾는데, organizations.name 에는 UNIQUE 가 없어
+// (migrations.sql:14-22) 같은 이름이 여럿일 수 있다. 그럴 때는 어느 조직인지
+// 단정하지 않고 조직코드를 적으라고 되돌린다.
+func (s *Server) findOrganization(ctx context.Context, external, name string) (string, error) {
+	if external != "" {
+		var id string
+		err := s.db.QueryRow(ctx, `SELECT id FROM organizations WHERE external_id=$1`, external).Scan(&id)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", fmt.Errorf("조직코드 %s 에 해당하는 조직이 없습니다", external)
+		}
+		if err != nil {
+			return "", err
+		}
+		return id, nil
+	}
+	rows, err := s.db.Query(ctx, `SELECT id FROM organizations WHERE name=$1 LIMIT 2`, name)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return "", err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	switch len(ids) {
+	case 1:
+		return ids[0], nil
+	case 0:
+		return "", fmt.Errorf("조직명 %s 에 해당하는 조직이 없습니다", name)
+	default:
+		return "", fmt.Errorf("조직명 %s 인 조직이 여러 개입니다. 조직코드를 적어 주십시오", name)
+	}
+}
+
 func (s *Server) saveEmployee(r *http.Request, in *employeeInput) (string, error) {
 	if in.ID == "" {
 		_ = s.db.QueryRow(r.Context(), `SELECT id FROM employees WHERE employee_no=$1`, in.EmployeeNo).Scan(&in.ID)
@@ -106,13 +157,22 @@ func (s *Server) saveEmployee(r *http.Request, in *employeeInput) (string, error
 	if in.Status == "" {
 		in.Status = "active"
 	}
-	if in.OrganizationID == nil && in.OrganizationName != "" {
-		orgID := newID()
-		external := in.OrganizationExternalID
-		if external == "" {
-			external = "import:" + strings.ToLower(strings.ReplaceAll(in.OrganizationName, " ", "-"))
-		}
-		err := s.db.QueryRow(r.Context(), `INSERT INTO organizations(id,external_id,name) VALUES($1,$2,$3) ON CONFLICT(external_id) DO UPDATE SET name=EXCLUDED.name,updated_at=now() RETURNING id`, orgID, external, in.OrganizationName).Scan(&orgID)
+	// 직원을 저장하는 길에서는 조직을 만들지도, 고치지도 않는다. 이미 있는 조직만
+	// 찾고 찾지 못하면 그 행을 오류로 되돌린다. 직원 양식과 USER_GUIDE 3.4 절이
+	// "조직을 바꿀 때는 조직코드가 있는 양식을 쓰라"고 안내하는데, 예전 분기는
+	// 조직명이 있으면 external_id 를 "import:<조직명>" 으로 만들어 넣고
+	// ON CONFLICT(external_id) DO UPDATE SET name 까지 했다. 그래서:
+	//   - 조직명 없이 조직코드만 적은 행은 소속 없이 저장됐다 — 가져오기는
+	//     "반영"이라 보고하면서 직원의 소속을 조용히 지웠다.
+	//   - 양식(조직코드·조직명 두 열이 모두 찬 가장 흔한 모양)에 오타 난 조직코드를
+	//     적으면 그 코드로 조직이 새로 생기고 직원이 그리로 옮겨졌다.
+	//   - 조직코드는 맞고 조직명만 오타인 행 하나가 기존 조직의 이름을 전사적으로
+	//     바꿨다. 내보낸 직원목록처럼 조직코드 열이 없는 파일은 이름이 같은 중복
+	//     조직을 만들어 파일에 있던 직원 전원의 소속을 옮겼다.
+	// 모두 revert 로 돌아오지 않는 DB 변경이다. 조직은 조직 관리
+	// (upsertOrganization)와 인사 동기화(runEmployeeSync)에서만 만든다.
+	if in.OrganizationID == nil && (in.OrganizationExternalID != "" || in.OrganizationName != "") {
+		orgID, err := s.findOrganization(r.Context(), in.OrganizationExternalID, in.OrganizationName)
 		if err != nil {
 			return "", err
 		}
@@ -175,12 +235,13 @@ func (s *Server) importEmployees(w http.ResponseWriter, r *http.Request) {
 		} else if in.Status == "퇴직" {
 			in.Status = "retired"
 		}
+		// 어느 행이 왜 걸렸는지 화면이 보여줄 수 있도록 사번도 함께 돌려준다.
 		if in.EmployeeNo == "" || in.Name == "" {
-			failures = append(failures, map[string]any{"row": i + 2, "error": "사번/이름 누락"})
+			failures = append(failures, map[string]any{"row": i + 2, "employeeNo": in.EmployeeNo, "error": "사번/이름 누락"})
 			continue
 		}
 		if _, err := s.saveEmployee(r, &in); err != nil {
-			failures = append(failures, map[string]any{"row": i + 2, "error": err.Error()})
+			failures = append(failures, map[string]any{"row": i + 2, "employeeNo": in.EmployeeNo, "error": err.Error()})
 		} else {
 			success++
 		}

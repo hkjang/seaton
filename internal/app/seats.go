@@ -443,6 +443,16 @@ func readSpreadsheet(w http.ResponseWriter, r *http.Request) ([][]string, bool) 
 			writeError(w, 400, "invalid_csv", "CSV 파일을 읽지 못했습니다")
 			return nil, false
 		}
+		// UTF-8 BOM은 파일의 인코딩 표시일 뿐 열 이름의 일부가 아니다. 그대로 두면
+		// 첫 칸이 "BOM+사번"이 되어, 머리글로 열을 찾는 파서(importEmployees)가
+		// 사번 열을 못 찾고 모든 행을 "사번/이름 누락"으로 되돌린다. 이 서비스가
+		// 내려주는 직원 양식과 Excel이 저장하는 UTF-8 CSV가 모두 BOM으로 시작하므로
+		// 안내대로 양식을 채워 올린 파일이 통째로 거절됐다. 열 위치로 읽는
+		// 파서(bulkAssignments)는 머리글을 보지 않아 같은 파일이 멀쩡히 돌았고,
+		// 그래서 두 가져오기가 같은 파일을 다르게 읽었다.
+		if len(rows) > 0 && len(rows[0]) > 0 {
+			rows[0][0] = strings.TrimPrefix(rows[0][0], "\ufeff")
+		}
 		return rows, true
 	}
 	writeError(w, 400, "unsupported_file", "CSV 또는 XLSX 파일만 사용할 수 있습니다")

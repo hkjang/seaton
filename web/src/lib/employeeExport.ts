@@ -15,10 +15,11 @@
  *
  * 다만 이 파일 자체는 가져오기 입력이 아니다. 조직을 가리키는 "조직코드"
  * (organizations.external_id)가 없어 그대로 올리면 `saveEmployee`
- * (employees.go:109-120)가 external='import:<조직명>' 으로 ON CONFLICT 을 놓쳐
- * **같은 이름의 새 조직을 만들고** 직원을 그리로 옮긴다(organizations.name 에
- * UNIQUE 가 없다 — migrations.sql:14-22). 조직을 바꿀 때는 조직코드가 있는 직원
- * 양식을 쓴다. USER_GUIDE 3.4 절이 그렇게 안내한다.
+ * (`findOrganization`)가 조직을 "조직명"으로만 찾는다 — organizations.name 에는
+ * UNIQUE 가 없어(migrations.sql:14-22) 같은 이름의 조직이 여럿이면 그 행이
+ * 걸리고, 조직명 칸이 빈 행은 소속을 지운다. "좌석" 열은 파서가 읽지 않으므로
+ * 좌석도 반영되지 않는다. 조직을 바꿀 때는 조직코드가 있는 직원 양식을 쓰고
+ * 좌석은 좌석 일괄 배정을 쓴다. USER_GUIDE 3.4 절이 그렇게 안내한다.
  */
 
 import type { Employee } from "../types";
