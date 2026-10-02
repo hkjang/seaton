@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   Alert,
   Avatar,
@@ -56,19 +56,29 @@ export function EmployeesPage() {
     [loading, setLoading] = useState(true),
     [message, setMessage] = useState(""),
     [error, setError] = useState("");
+  // 늦게 도착한 이전 응답이 최신 결과를 덮어쓰지 않도록 순번을 센다. 조건을
+  // 잇따라 바꾸면 먼저 보낸 조회가 나중에 끝나는 일이 실제로 있다. 이력 화면
+  // (HistoryPage.load)과 같은 꼴이다.
+  const requestRef = useRef(0);
   // 가져오기 뒤에도 입력 중인 q가 아닌 주소의 확정 조건으로 재조회한다.
   const load = async (filters = readEmployeeParams(searchParams)) => {
+    const sequence = ++requestRef.current;
     setLoading(true);
+    // 새 조회는 낡은 실패를 지운다. 그러지 않으면 다시 성공한 뒤에도 오류
+    // 배너가 그대로 남아 보고 있는 목록을 못 믿게 된다.
+    setError("");
     try {
       const params = employeeQuery(filters);
       const data = await api<{ items: Employee[] }>(
         `/api/v1/employees?${params}`,
       );
+      if (sequence !== requestRef.current) return;
       setItems(data.items);
     } catch (e) {
+      if (sequence !== requestRef.current) return;
       setError(e instanceof Error ? e.message : "직원을 불러오지 못했습니다");
     } finally {
-      setLoading(false);
+      if (sequence === requestRef.current) setLoading(false);
     }
   };
   useEffect(() => {
