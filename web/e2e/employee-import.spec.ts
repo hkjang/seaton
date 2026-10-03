@@ -35,6 +35,9 @@ import { csrfToken, login } from "./helpers";
 /** 시드가 만드는 직원. 앞줄 5석(개발팀 구역) 밖이라 구역 불일치 검증과 겹치지 않는다. */
 const TARGET = "E007";
 
+/** 같은 파일에 정상 행을 함께 넣어 부분 성공을 확인할 때 쓰는 둘째 직원. */
+const OTHER = "E008";
+
 type EmployeeRecord = {
   employeeNo: string;
   name: string;
@@ -297,6 +300,54 @@ test.describe("직원 가져오기", () => {
       expect((await fetchEmployee(page, TARGET)).organizationName).toBe(
         "인사팀",
       );
+    });
+  });
+
+  test("재직상태 오타는 한국어 사유로 남고 같은 파일의 정상 행은 반영된다", async ({
+    page,
+  }) => {
+    // 두 직원을 건드린다 — 오타 행과 정상 행이 한 파일에 함께 있어야 부분
+    // 성공이 유지되는지 보이기 때문이다. 둘 다 원래 값으로 되돌린다.
+    await keepingEmployee(page, TARGET, async (before) => {
+      await keepingEmployee(page, OTHER, async (otherBefore) => {
+        await page.goto("/admin/employees");
+        await page.setInputFiles(
+          EMPLOYEE_INPUT,
+          csv([
+            "사번,이름,재직상태,근무지",
+            // `재직중`은 세 코드·세 낱말 어디에도 없다. 예전에는 이 값이 그대로
+            // INSERT 되어 employees.status 의 CHECK 를 쳤고, pgx 원문
+            // (`... violates check constraint "employees_status_check"
+            // (SQLSTATE 23514)`)이 아래 실패 목록에 그대로 떴다.
+            `${TARGET},${before.name},재직중,본사 9층`,
+            `${OTHER},${otherBefore.name},휴직,본사 9층`,
+          ]),
+        );
+        await expect(page.getByText(/1명 반영, 1건 확인 필요/)).toBeVisible();
+        await expect(page.getByText(/반영되지 않은 1행/)).toBeVisible();
+
+        // 관리자가 파일의 어느 칸을 어떤 값으로 고쳐야 하는지 읽을 수 있어야 한다.
+        await expect(
+          page.getByText(/재직상태 값을 알 수 없습니다: 재직중/),
+        ).toBeVisible();
+        await expect(page.getByText(/재직\/휴직\/퇴직/)).toBeVisible();
+        // DB 원문은 화면에 없어야 한다.
+        await expect(page.getByText(/SQLSTATE/)).toHaveCount(0);
+        await expect(page.getByText(/check constraint/)).toHaveCount(0);
+
+        // 오타 행은 아무것도 바꾸지 않는다.
+        const after = await fetchEmployee(page, TARGET);
+        expect(after.status, "오타 행의 상태는 그대로여야 한다").toBe(
+          before.status,
+        );
+        expect(after.workplace ?? "", "오타 행은 반영되지 않아야 한다").toBe(
+          before.workplace ?? "",
+        );
+        // 같은 파일의 정상 행은 반영된다(부분 성공).
+        const otherAfter = await fetchEmployee(page, OTHER);
+        expect(otherAfter.status).toBe("leave");
+        expect(otherAfter.workplace).toBe("본사 9층");
+      });
     });
   });
 });

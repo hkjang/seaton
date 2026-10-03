@@ -100,6 +100,54 @@ type employeeInput struct {
 	Status                 string  `json:"status"`
 }
 
+// inputError 는 사용자가 올린 파일이나 요청의 값이 잘못됐다는 오류다. 이 오류의
+// 문장만 화면에 그대로 보여 준다 — 그렇지 않은 오류(DB 장애·제약 위반 등)의
+// 원문에는 테이블·제약 이름과 SQLSTATE 가 들어 있어, 그대로 보여 주면 관리자는
+// 파일의 어디를 고쳐야 하는지 알 수 없고 스키마 내부만 새어 나간다.
+type inputError struct{ msg string }
+
+func (e inputError) Error() string { return e.msg }
+
+func inputErrorf(format string, args ...any) error {
+	return inputError{msg: fmt.Sprintf(format, args...)}
+}
+
+// userMessage 는 사용자에게 보여도 되는 문장을 가려낸다. inputError 면 그 문장을,
+// 아니면 고정 문장을 돌려준다.
+func userMessage(err error, fallback string) string {
+	var input inputError
+	if errors.As(err, &input) {
+		return input.Error()
+	}
+	return fallback
+}
+
+// normalizeEmployeeStatus 는 파일의 `재직상태` 칸을 employees.status 가 받는 세
+// 코드로 바꾼다. 그 열에는 CHECK (status IN ('active','leave','retired')) 가
+// 걸려 있으므로(migrations.sql:34) 모르는 값을 그대로 INSERT 하면 그 행이 DB
+// 제약 위반으로 떨어지고 pgx 원문이 실패 사유로 화면에 뜬다. 값 규칙은 인사
+// 동기화(runEmployeeSync)와 같다 — 세 코드만 받는다.
+//
+// 두 입력 모양을 모두 받아야 한다: 직원 양식(EmployeesPage.downloadTemplate)은
+// 예시로 `active` 를 쓰고, 내보낸 직원목록(employeeExport.employeeStatusLabel)은
+// `재직`·`휴직`·`퇴직` 한국어 라벨을 쓴다. 어느 한쪽만 받으면 양식이나 내보낸
+// 파일이 깨진다.
+//
+// 빈 값은 오류가 아니다 — 조직이나 직급만 고치는 흔한 파일에는 재직상태 열이
+// 아예 없거나 비어 있고, saveEmployee 가 그것을 active 로 둔다.
+func normalizeEmployeeStatus(raw string) (string, error) {
+	switch status := strings.TrimSpace(raw); status {
+	case "", "active", "재직":
+		return "active", nil
+	case "leave", "휴직":
+		return "leave", nil
+	case "retired", "퇴직":
+		return "retired", nil
+	default:
+		return "", inputErrorf("재직상태 값을 알 수 없습니다: %s (재직/휴직/퇴직)", status)
+	}
+}
+
 // findOrganization 은 조직코드(organizations.external_id)나 조직명으로 이미 있는
 // 조직을 찾는다. 찾지 못하면 사람이 파일을 고칠 수 있도록 어느 값이 문제인지
 // 적은 오류를 돌려준다 — 가져오기는 이 문장을 그 행의 사유로 그대로 보여 준다.
@@ -114,7 +162,7 @@ func (s *Server) findOrganization(ctx context.Context, external, name string) (s
 		var id string
 		err := s.db.QueryRow(ctx, `SELECT id FROM organizations WHERE external_id=$1`, external).Scan(&id)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return "", fmt.Errorf("조직코드 %s 에 해당하는 조직이 없습니다", external)
+			return "", inputErrorf("조직코드 %s 에 해당하는 조직이 없습니다", external)
 		}
 		if err != nil {
 			return "", err
@@ -141,9 +189,9 @@ func (s *Server) findOrganization(ctx context.Context, external, name string) (s
 	case 1:
 		return ids[0], nil
 	case 0:
-		return "", fmt.Errorf("조직명 %s 에 해당하는 조직이 없습니다", name)
+		return "", inputErrorf("조직명 %s 에 해당하는 조직이 없습니다", name)
 	default:
-		return "", fmt.Errorf("조직명 %s 인 조직이 여러 개입니다. 조직코드를 적어 주십시오", name)
+		return "", inputErrorf("조직명 %s 인 조직이 여러 개입니다. 조직코드를 적어 주십시오", name)
 	}
 }
 
@@ -154,9 +202,16 @@ func (s *Server) saveEmployee(r *http.Request, in *employeeInput) (string, error
 			in.ID = newID()
 		}
 	}
-	if in.Status == "" {
-		in.Status = "active"
+	// 상태는 INSERT 앞에서 가린다. 그대로 넣으면 모르는 값 한 칸이 그 행을
+	// employees.status 의 CHECK 위반(migrations.sql:34)으로 떨어뜨리고, 그 pgx
+	// 원문이 가져오기의 실패 사유로 화면에 그대로 떠서 관리자는 파일의 무엇을
+	// 고쳐야 할지 알 수 없다. 저장하는 길이 한 곳이므로 여기서 한 번만 가린다 —
+	// 가져오기와 단건 저장이 같은 값을 다르게 읽지 않게.
+	status, err := normalizeEmployeeStatus(in.Status)
+	if err != nil {
+		return "", err
 	}
+	in.Status = status
 	// 직원을 저장하는 길에서는 조직을 만들지도, 고치지도 않는다. 이미 있는 조직만
 	// 찾고 찾지 못하면 그 행을 오류로 되돌린다. 직원 양식과 USER_GUIDE 3.4 절이
 	// "조직을 바꿀 때는 조직코드가 있는 양식을 쓰라"고 안내하는데, 예전 분기는
@@ -178,7 +233,7 @@ func (s *Server) saveEmployee(r *http.Request, in *employeeInput) (string, error
 		}
 		in.OrganizationID = &orgID
 	}
-	_, err := s.db.Exec(r.Context(), `INSERT INTO employees(id,employee_no,name,email,organization_id,title,position,workplace,status) VALUES($1,$2,$3,NULLIF($4,''),$5,NULLIF($6,''),NULLIF($7,''),NULLIF($8,''),$9) ON CONFLICT(employee_no) DO UPDATE SET name=EXCLUDED.name,email=EXCLUDED.email,organization_id=EXCLUDED.organization_id,title=EXCLUDED.title,position=EXCLUDED.position,workplace=EXCLUDED.workplace,status=EXCLUDED.status,updated_at=now()`, in.ID, in.EmployeeNo, in.Name, in.Email, in.OrganizationID, in.Title, in.Position, in.Workplace, in.Status)
+	_, err = s.db.Exec(r.Context(), `INSERT INTO employees(id,employee_no,name,email,organization_id,title,position,workplace,status) VALUES($1,$2,$3,NULLIF($4,''),$5,NULLIF($6,''),NULLIF($7,''),NULLIF($8,''),$9) ON CONFLICT(employee_no) DO UPDATE SET name=EXCLUDED.name,email=EXCLUDED.email,organization_id=EXCLUDED.organization_id,title=EXCLUDED.title,position=EXCLUDED.position,workplace=EXCLUDED.workplace,status=EXCLUDED.status,updated_at=now()`, in.ID, in.EmployeeNo, in.Name, in.Email, in.OrganizationID, in.Title, in.Position, in.Workplace, in.Status)
 	return in.ID, err
 }
 
@@ -195,6 +250,14 @@ func (s *Server) upsertEmployee(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := s.saveEmployee(r, &in)
 	if err != nil {
+		// 사용자가 고칠 수 있는 값 오류는 어느 값이 문제인지 그대로 돌려준다.
+		// 고정 문장으로 덮으면 가져오기 경로에서는 보이는 사유가 단건 저장에서만
+		// 사라져 같은 값을 두 길이 다르게 보고한다.
+		var input inputError
+		if errors.As(err, &input) {
+			writeError(w, 400, "invalid_employee", input.Error())
+			return
+		}
 		writeError(w, 409, "employee_conflict", "직원 정보가 중복되었거나 올바르지 않습니다")
 		return
 	}
@@ -228,20 +291,18 @@ func (s *Server) importEmployees(w http.ResponseWriter, r *http.Request) {
 	failures := []map[string]any{}
 	for i, row := range rows[1:] {
 		in := employeeInput{EmployeeNo: find(row, "employeeno", "employee_no", "사번"), Name: find(row, "name", "이름", "성명"), Email: find(row, "email", "이메일"), OrganizationExternalID: find(row, "organizationid", "organization_id", "조직코드"), OrganizationName: find(row, "organization", "organizationname", "조직명", "부서"), Title: find(row, "title", "직급"), Position: find(row, "position", "직책"), Workplace: find(row, "workplace", "근무지"), Status: find(row, "status", "재직상태")}
-		if in.Status == "재직" {
-			in.Status = "active"
-		} else if in.Status == "휴직" {
-			in.Status = "leave"
-		} else if in.Status == "퇴직" {
-			in.Status = "retired"
-		}
 		// 어느 행이 왜 걸렸는지 화면이 보여줄 수 있도록 사번도 함께 돌려준다.
+		fail := func(reason string) {
+			failures = append(failures, map[string]any{"row": i + 2, "employeeNo": in.EmployeeNo, "error": reason})
+		}
 		if in.EmployeeNo == "" || in.Name == "" {
-			failures = append(failures, map[string]any{"row": i + 2, "employeeNo": in.EmployeeNo, "error": "사번/이름 누락"})
+			fail("사번/이름 누락")
 			continue
 		}
+		// 사용자가 고칠 수 있는 오류(모르는 재직상태·없는 조직코드·중복 조직명)만
+		// 문장을 그대로 보여 준다. DB 오류의 원문에는 제약 이름과 SQLSTATE 가 있다.
 		if _, err := s.saveEmployee(r, &in); err != nil {
-			failures = append(failures, map[string]any{"row": i + 2, "employeeNo": in.EmployeeNo, "error": err.Error()})
+			fail(userMessage(err, "저장하지 못했습니다"))
 		} else {
 			success++
 		}
