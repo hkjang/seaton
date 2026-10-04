@@ -27,6 +27,9 @@ describe("sourceLabel", () => {
       "dashboard_bulk",
       "hr_sync",
       "mcp",
+      // 직원 가져오기로 퇴직 처리한 직원의 좌석을 서버가 비울 때 남기는 값
+      // (employees.go releaseRetiredSeat 의 source 인자).
+      "employee_import",
     ])
       expect(SOURCE_LABELS[source]).toBeTruthy();
   });

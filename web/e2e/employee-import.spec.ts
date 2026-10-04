@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { csrfToken, login } from "./helpers";
+import { csrfToken, fetchSeats, keepingSeats, login } from "./helpers";
 
 /**
  * 직원 가져오기 — 양식 그대로의 파일이 실제로 반영되는지.
@@ -35,6 +35,9 @@ import { csrfToken, login } from "./helpers";
 /** 시드가 만드는 직원. 앞줄 5석(개발팀 구역) 밖이라 구역 불일치 검증과 겹치지 않는다. */
 const TARGET = "E007";
 
+/** TARGET 직원의 이름. 좌석 복구는 이름으로 자리를 되돌린다(`keepingSeats`). */
+const TARGET_NAME = "오인사";
+
 /** 같은 파일에 정상 행을 함께 넣어 부분 성공을 확인할 때 쓰는 둘째 직원. */
 const OTHER = "E008";
 
@@ -48,6 +51,8 @@ type EmployeeRecord = {
   position?: string;
   workplace?: string;
   status: string;
+  seatId?: string | null;
+  seatNo?: string;
 };
 
 /** 검증용 CSV를 임시 파일 없이 올린다(bulk-assign.spec.ts와 같은 방식). */
@@ -115,6 +120,25 @@ const fetchOrganizations = async (page: Page) => {
  */
 const organizationShape = (items: OrganizationRecord[]) =>
   items.map((org) => `${org.externalId}=${org.name}`).sort();
+
+/** 대시보드 지표 하나. 좌석이 실제로 반납됐는지는 여기에 숫자로 드러난다. */
+const dashboardCount = async (page: Page, key: string) => {
+  const found = await (await page.request.get("/api/v1/dashboard")).json();
+  return (found.counts as Record<string, number>)[key];
+};
+
+/**
+ * 좌석 해제 이력 건수. 방식과 사번으로 좁혀, 다른 검증이 남긴 기록과 섞이지
+ * 않게 한다.
+ */
+const importHistoryCount = async (page: Page, employeeNo: string) => {
+  const found = await (
+    await page.request.get(
+      `/api/v1/seat-history?source=employee_import&q=${employeeNo}`,
+    )
+  ).json();
+  return found.total as number;
+};
 
 /** 표에서 한 직원의 행을 집어 '조직' 칸을 읽는다(열 순서: 직원·사번·조직·…). */
 const organizationCell = async (page: Page, employeeNo: string) => {
@@ -300,6 +324,113 @@ test.describe("직원 가져오기", () => {
       expect((await fetchEmployee(page, TARGET)).organizationName).toBe(
         "인사팀",
       );
+    });
+  });
+
+  /**
+   * 퇴직 처리는 좌석을 비운다 — 인사 동기화(`runEmployeeSync`)가 이미 그렇게
+   * 하는 전이다. 가져오기만 `employees.status` 한 칸을 바꾸고 끝내면 파일 한
+   * 장으로 퇴직 처리한 직원이 좌석맵에 계속 앉아 있고 대시보드의 "퇴직자
+   * 좌석"(처리필요에 합산된다)이 올라간다.
+   *
+   * 시드 직원의 좌석을 실제로 비우므로 `keepingSeats` 가 끝에 그 자리로 다시
+   * 붙인다 — 되돌리지 않으면 시드 10명 전원 배정을 전제하는
+   * employee-export.spec.ts 와 대시보드 검증이 엉뚱한 이유로 깨진다.
+   * `keepingEmployee` 는 직원 열만 되돌리고 배정은 되돌리지 않는다.
+   */
+  test("퇴직으로 올린 행은 좌석을 비우고 방식 라벨이 붙은 이력을 남긴다", async ({
+    page,
+  }) => {
+    await keepingSeats(page, [TARGET_NAME], async () => {
+      await keepingEmployee(page, TARGET, async (before) => {
+        expect(before.name, "좌석 복구는 이름으로 한다").toBe(TARGET_NAME);
+        const seatNo = before.seatNo ?? "";
+        expect(seatNo, "시드 직원은 좌석에 앉아 있다").toBeTruthy();
+        const retiredBefore = await dashboardCount(page, "retiredAssignments");
+        const unusedBefore = await dashboardCount(page, "unusedSeats");
+        const historyBefore = await importHistoryCount(page, TARGET);
+
+        await page.goto("/admin/employees");
+        await page.setInputFiles(
+          EMPLOYEE_INPUT,
+          csv(["사번,이름,재직상태", `${TARGET},${before.name},퇴직`]),
+        );
+        await expect(page.getByText(/1명 반영, 0건 확인 필요/)).toBeVisible();
+
+        // 배정이 닫혀야 한다. 열려 있으면 그 자리를 다른 사람에게 줄 수 없다.
+        const after = await fetchEmployee(page, TARGET);
+        expect(after.status).toBe("retired");
+        expect(after.seatId ?? null, "좌석 배정이 닫혀야 한다").toBeNull();
+        expect(after.seatNo ?? "").toBe("");
+
+        // 좌석맵에 퇴직자가 남으면 안 된다.
+        const seat = (await fetchSeats(page)).find((s) => s.seatNo === seatNo);
+        expect(seat, `좌석 ${seatNo}`).toBeTruthy();
+        expect(seat?.employeeName ?? "").toBe("");
+
+        // 좌석 자체도 available 로 돌아와야 한다. 배정만 닫고 seats.status 를
+        // assigned 로 두면 이 숫자가 늘지 않는다("미사용 좌석" = available 이고
+        // 배정이 없는 좌석).
+        expect(
+          await dashboardCount(page, "unusedSeats"),
+          "비운 좌석이 미사용 좌석으로 잡혀야 한다",
+        ).toBe(unusedBefore + 1);
+        // 그리고 "퇴직자 좌석"은 올라가지 않아야 한다.
+        expect(
+          await dashboardCount(page, "retiredAssignments"),
+          "파일로 퇴직 처리한 직원이 퇴직자 좌석에 남으면 안 된다",
+        ).toBe(retiredBefore);
+
+        // 누가·왜 비웠는지 추적되어야 한다.
+        expect(await importHistoryCount(page, TARGET)).toBe(historyBefore + 1);
+
+        // 이력 화면에서 사람이 읽을 수 있어야 한다 — 원문 값이 그대로 보이면
+        // 관리자는 그 기록이 무엇인지 알 수 없다.
+        await page.goto("/admin/history");
+        await page.getByRole("combobox", { name: "방식" }).click();
+        await page
+          .getByRole("option", { name: "직원 가져오기", exact: true })
+          .click();
+        await page.getByRole("button", { name: "조회", exact: true }).click();
+        const row = page.locator("table tbody tr", { hasText: TARGET });
+        await expect(row.first()).toContainText("퇴직자 자동 좌석 해제");
+        await expect(row.first()).toContainText("직원 가져오기");
+        await expect(page.getByText("employee_import")).toHaveCount(0);
+
+        // 이미 퇴직이라 자리가 없는 직원을 다시 올려도 이력이 늘지 않는다.
+        await page.goto("/admin/employees");
+        await page.setInputFiles(
+          EMPLOYEE_INPUT,
+          csv(["사번,이름,재직상태", `${TARGET},${before.name},퇴직`]),
+        );
+        await expect(page.getByText(/1명 반영, 0건 확인 필요/)).toBeVisible();
+        expect(
+          await importHistoryCount(page, TARGET),
+          "좌석이 없는데 이력이 또 남으면 안 된다",
+        ).toBe(historyBefore + 1);
+      });
+    });
+  });
+
+  /**
+   * 퇴직이 아닌 전이는 좌석을 건드리지 않아야 한다. 같은 파일 한 장이 좌석까지
+   * 움직이는 것은 퇴직 하나뿐이라는 선이다.
+   */
+  test("휴직으로 올린 행은 좌석을 그대로 둔다", async ({ page }) => {
+    await keepingEmployee(page, TARGET, async (before) => {
+      const seatNo = before.seatNo ?? "";
+      expect(seatNo, "시드 직원은 좌석에 앉아 있다").toBeTruthy();
+
+      await page.goto("/admin/employees");
+      await page.setInputFiles(
+        EMPLOYEE_INPUT,
+        csv(["사번,이름,재직상태", `${TARGET},${before.name},휴직`]),
+      );
+      await expect(page.getByText(/1명 반영, 0건 확인 필요/)).toBeVisible();
+
+      const after = await fetchEmployee(page, TARGET);
+      expect(after.status).toBe("leave");
+      expect(after.seatNo ?? "", "휴직은 자리를 비우지 않는다").toBe(seatNo);
     });
   });
 

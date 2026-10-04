@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func (s *Server) listOrganizations(w http.ResponseWriter, r *http.Request) {
@@ -195,7 +196,67 @@ func (s *Server) findOrganization(ctx context.Context, external, name string) (s
 	}
 }
 
-func (s *Server) saveEmployee(r *http.Request, in *employeeInput) (string, error) {
+// seatWriter 는 좌석 해제의 세 문장을 실행할 수 있는 것이다. 인사 동기화는 자기
+// 큰 트랜잭션(pgx.Tx) 안에서, 직원 저장은 그 세 문장만 묶은 짧은 트랜잭션에서
+// 같은 함수를 부른다 — 퇴직이라는 같은 전이를 두 입력 경로가 다르게 처리하지
+// 않게. pgxpool.Pool 과 pgx.Tx 가 둘 다 이 두 메서드를 갖는다.
+type seatWriter interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+// releaseRetiredSeat 는 퇴직 처리된 직원의 열린 좌석 배정을 닫고, 그 좌석을
+// available 로 돌리고, 누가·왜 비웠는지 seat_history 에 한 건 남긴다. 좌석 자체는
+// 지우지 않고 다른 사람에게 재배정하지도 않는다 — 사람이 되돌릴 수 있는 변경만
+// 한다.
+//
+// 열린 배정이 없으면 아무것도 하지 않고 조용히 돌아온다. 좌석이 없는 직원을
+// 퇴직으로 올리는 것은 오류가 아니고, 이미 퇴직이라 자리가 비어 있는 직원을 다시
+// 올려도 이력이 늘지 않아야 한다 — 두 경우가 모두 이 길이다.
+//
+// 세 문장 중 하나가 깨지면 그대로 올린다. 삼키면 "배정은 닫혔는데 좌석이
+// occupied" 가 남은 채로 성공이라 보고되고, 트랜잭션 안에서는 어차피 커밋이
+// 실패한다.
+func releaseRetiredSeat(ctx context.Context, q seatWriter, employeeID string, actorID *string, source string) error {
+	var seatID string
+	err := q.QueryRow(ctx, `UPDATE seat_assignments SET ended_at=now() WHERE employee_id=$1 AND ended_at IS NULL RETURNING seat_id`, employeeID).Scan(&seatID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if _, err = q.Exec(ctx, `UPDATE seats SET status='available',updated_at=now() WHERE id=$1`, seatID); err != nil {
+		return err
+	}
+	_, err = q.Exec(ctx, `INSERT INTO seat_history(id,employee_id,previous_seat_id,changed_by,reason,source) VALUES($1,$2,$3,$4,'퇴직자 자동 좌석 해제',$5)`, newID(), employeeID, seatID, actorID, source)
+	return err
+}
+
+// releaseRetiredSeatForRequest 는 요청을 보낸 사람 이름으로 좌석 해제를 돌린다.
+// 가져오기는 행마다 독립이 계약이므로 직원 INSERT 까지 한 트랜잭션으로 묶지
+// 않고, 해제 세 문장만 짧은 트랜잭션으로 묶는다 — 중간에 깨져도 반쯤 해제된
+// 좌석이 남지 않게.
+func (s *Server) releaseRetiredSeatForRequest(r *http.Request, employeeID, source string) error {
+	ctx := r.Context()
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var actor *string
+	if u, ok := userFrom(r); ok && u.ID != "" {
+		actor = &u.ID
+	}
+	if err := releaseRetiredSeat(ctx, tx, employeeID, actor, source); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// saveEmployee 는 직원 한 명을 저장하는 유일한 길이다. source 는 좌석 해제가
+// seat_history 에 남길 방식이고, 호출하는 경로를 그대로 따른다.
+func (s *Server) saveEmployee(r *http.Request, in *employeeInput, source string) (string, error) {
 	if in.ID == "" {
 		_ = s.db.QueryRow(r.Context(), `SELECT id FROM employees WHERE employee_no=$1`, in.EmployeeNo).Scan(&in.ID)
 		if in.ID == "" {
@@ -233,8 +294,20 @@ func (s *Server) saveEmployee(r *http.Request, in *employeeInput) (string, error
 		}
 		in.OrganizationID = &orgID
 	}
-	_, err = s.db.Exec(r.Context(), `INSERT INTO employees(id,employee_no,name,email,organization_id,title,position,workplace,status) VALUES($1,$2,$3,NULLIF($4,''),$5,NULLIF($6,''),NULLIF($7,''),NULLIF($8,''),$9) ON CONFLICT(employee_no) DO UPDATE SET name=EXCLUDED.name,email=EXCLUDED.email,organization_id=EXCLUDED.organization_id,title=EXCLUDED.title,position=EXCLUDED.position,workplace=EXCLUDED.workplace,status=EXCLUDED.status,updated_at=now()`, in.ID, in.EmployeeNo, in.Name, in.Email, in.OrganizationID, in.Title, in.Position, in.Workplace, in.Status)
-	return in.ID, err
+	if _, err = s.db.Exec(r.Context(), `INSERT INTO employees(id,employee_no,name,email,organization_id,title,position,workplace,status) VALUES($1,$2,$3,NULLIF($4,''),$5,NULLIF($6,''),NULLIF($7,''),NULLIF($8,''),$9) ON CONFLICT(employee_no) DO UPDATE SET name=EXCLUDED.name,email=EXCLUDED.email,organization_id=EXCLUDED.organization_id,title=EXCLUDED.title,position=EXCLUDED.position,workplace=EXCLUDED.workplace,status=EXCLUDED.status,updated_at=now()`, in.ID, in.EmployeeNo, in.Name, in.Email, in.OrganizationID, in.Title, in.Position, in.Workplace, in.Status); err != nil {
+		return in.ID, err
+	}
+	// 퇴직은 좌석을 비운다. 인사 동기화(runEmployeeSync)는 같은 전이에서 이미
+	// 그렇게 하는데 파일 가져오기와 단건 저장만 employees.status 한 칸을 바꾸고
+	// 끝냈다 — 그래서 파일 한 장으로 퇴직 처리한 직원이 좌석맵에 계속 앉아 있고
+	// 대시보드의 "퇴직자 좌석"(처리필요에 합산된다)이 올라갔다. 같은 사건을 두
+	// 입력 경로가 다르게 처리하는 것이 이 저장소가 반복해서 고쳐 온 어긋남이다.
+	if in.Status == "retired" {
+		if err := s.releaseRetiredSeatForRequest(r, in.ID, source); err != nil {
+			return in.ID, err
+		}
+	}
+	return in.ID, nil
 }
 
 func (s *Server) upsertEmployee(w http.ResponseWriter, r *http.Request) {
@@ -248,7 +321,7 @@ func (s *Server) upsertEmployee(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "required_fields", "사번과 이름은 필수입니다")
 		return
 	}
-	id, err := s.saveEmployee(r, &in)
+	id, err := s.saveEmployee(r, &in, "manual")
 	if err != nil {
 		// 사용자가 고칠 수 있는 값 오류는 어느 값이 문제인지 그대로 돌려준다.
 		// 고정 문장으로 덮으면 가져오기 경로에서는 보이는 사유가 단건 저장에서만
@@ -301,7 +374,7 @@ func (s *Server) importEmployees(w http.ResponseWriter, r *http.Request) {
 		}
 		// 사용자가 고칠 수 있는 오류(모르는 재직상태·없는 조직코드·중복 조직명)만
 		// 문장을 그대로 보여 준다. DB 오류의 원문에는 제약 이름과 SQLSTATE 가 있다.
-		if _, err := s.saveEmployee(r, &in); err != nil {
+		if _, err := s.saveEmployee(r, &in, "employee_import"); err != nil {
 			fail(userMessage(err, "저장하지 못했습니다"))
 		} else {
 			success++

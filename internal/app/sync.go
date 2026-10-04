@@ -136,12 +136,13 @@ func (s *Server) runEmployeeSync(parent context.Context) (map[string]any, error)
 			retired = append(retired, id)
 		}
 	}
+	// 퇴직자 좌석 해제는 직원 가져오기·단건 저장과 같은 함수를 쓴다
+	// (releaseRetiredSeat). 같은 전이를 경로마다 다르게 처리하면 파일로 퇴직
+	// 처리한 직원이 좌석을 계속 점유한다. changed_by 는 비워 둔다 — 사람이 누른
+	// 동기화도 예약 실행도 같은 길을 타므로 이력에는 'System'으로 보인다.
 	for _, employeeID := range retired {
-		var seatID string
-		err = tx.QueryRow(ctx, `UPDATE seat_assignments SET ended_at=now() WHERE employee_id=$1 AND ended_at IS NULL RETURNING seat_id`, employeeID).Scan(&seatID)
-		if err == nil {
-			_, _ = tx.Exec(ctx, `UPDATE seats SET status='available',updated_at=now() WHERE id=$1`, seatID)
-			_, _ = tx.Exec(ctx, `INSERT INTO seat_history(id,employee_id,previous_seat_id,reason,source) VALUES($1,$2,$3,'퇴직자 자동 좌석 해제','hr_sync')`, newID(), employeeID, seatID)
+		if err = releaseRetiredSeat(ctx, tx, employeeID, nil, "hr_sync"); err != nil {
+			return nil, err
 		}
 	}
 	if err = tx.Commit(ctx); err != nil {
