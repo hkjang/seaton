@@ -16,6 +16,7 @@ export const SOURCE_LABELS: Record<string, string> = {
   dashboard: "처리필요에서 조치",
   dashboard_bulk: "처리필요 일괄 조치",
   hr_sync: "인사 동기화",
+  employee_import: "직원 가져오기",
   mcp: "MCP 연동",
 };
 
