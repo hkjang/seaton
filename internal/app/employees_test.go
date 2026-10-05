@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -175,5 +176,168 @@ func TestReleaseRetiredSeatReportsFailure(t *testing.T) {
 	// 사람에게는 pgx 원문을 보여주지 않는다.
 	if got := userMessage(broken, "저장하지 못했습니다"); got != "저장하지 못했습니다" {
 		t.Errorf("userMessage = %q", got)
+	}
+}
+
+// fakeRows 는 목록 핸들러의 스캔 루프가 쓰는 pgx.Rows 의 세 메서드만 흉내낸다
+// (fakeReleaser 와 같은 수법 — 가리는 것은 pgx 경계 하나뿐이다). values 의 각
+// 줄이 한 행이고 그 줄의 값이 Scan 의 dest 로 차례로 들어간다. 실제 DB 없이
+// "행을 읽다 깨지는" 경우를 만들 수 있는 유일한 수단이다.
+type fakeRows struct {
+	values  [][]any
+	idx     int
+	scanErr error // Scan 이 돌려줄 오류 (행을 읽다 연결이 끊긴 경우)
+	err     error // 루프가 끝난 뒤 Err() 가 돌려줄 오류 (조회가 중간에 끊긴 경우)
+	scans   int
+}
+
+func (f *fakeRows) Next() bool {
+	if f.idx >= len(f.values) {
+		return false
+	}
+	f.idx++
+	return true
+}
+
+func (f *fakeRows) Err() error { return f.err }
+
+func (f *fakeRows) Scan(dest ...any) error {
+	f.scans++
+	if f.scanErr != nil {
+		return f.scanErr
+	}
+	row := f.values[f.idx-1]
+	if len(row) != len(dest) {
+		return fmt.Errorf("fakeRows: 행의 값이 %d개인데 dest 는 %d개다", len(row), len(dest))
+	}
+	for i, v := range row {
+		switch target := dest[i].(type) {
+		case *string:
+			s, ok := v.(string)
+			if !ok {
+				return fmt.Errorf("fakeRows: dest[%d] 는 string 인데 값은 %T 다", i, v)
+			}
+			*target = s
+		case **string:
+			if v == nil {
+				*target = nil
+				continue
+			}
+			p, ok := v.(*string)
+			if !ok {
+				return fmt.Errorf("fakeRows: dest[%d] 는 *string 인데 값은 %T 다", i, v)
+			}
+			*target = p
+		case *any:
+			*target = v
+		default:
+			return fmt.Errorf("fakeRows: dest[%d] 타입을 모른다: %T", i, dest[i])
+		}
+	}
+	return nil
+}
+
+func ptr(s string) *string { return &s }
+
+// 정상 경로: 돌려준 모든 행이 그대로 목록에 담겨야 한다. 열 순서가 어긋나면
+// 이름 자리에 사번이 들어가므로 그 짝까지 못 박는다.
+func TestScanEmployeesReturnsEveryRow(t *testing.T) {
+	rows := &fakeRows{values: [][]any{
+		{"e-1", "E001", "김개발", "k@x.com", ptr("org-1"), "개발팀", "팀장", "책임", "본사", "active", ptr("seat-1"), "A-01"},
+		{"e-2", "E002", "이영업", "", nil, "", "", "", "", "retired", nil, ""},
+	}}
+	items, err := scanEmployees(rows)
+	if err != nil {
+		t.Fatalf("scanEmployees 오류: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("행 %d개, want 2", len(items))
+	}
+	if items[0].EmployeeNo != "E001" || items[0].Name != "김개발" || items[0].SeatNo != "A-01" {
+		t.Errorf("첫 행의 열 짝이 어긋났다: %+v", items[0])
+	}
+	if items[0].OrganizationID == nil || *items[0].OrganizationID != "org-1" {
+		t.Errorf("조직 ID 가 들어가지 않았다: %+v", items[0].OrganizationID)
+	}
+	if items[1].SeatID != nil || items[1].Status != "retired" {
+		t.Errorf("둘째 행이 어긋났다: %+v", items[1])
+	}
+}
+
+// 행을 읽다 깨지면 그 행만 조용히 버리고 "직원 1명" 을 200 으로 돌려주면 안
+// 된다 — 관리자는 그것이 전부라고 믿는다. 오류를 올려 핸들러가 500 을 내게
+// 한다.
+func TestScanEmployeesReportsScanFailure(t *testing.T) {
+	broken := errors.New("conn closed")
+	rows := &fakeRows{values: [][]any{
+		{"e-1", "E001", "김개발", "", nil, "", "", "", "", "active", nil, ""},
+		{"e-2", "E002", "이영업", "", nil, "", "", "", "", "active", nil, ""},
+	}, scanErr: broken}
+	items, err := scanEmployees(rows)
+	if !errors.Is(err, broken) {
+		t.Fatalf("scanEmployees 오류 = %v, want %v (부분 목록 %d건)", err, broken, len(items))
+	}
+	// 첫 실패에서 멈춘다 — 깨진 연결로 남은 행을 계속 읽을 이유가 없다.
+	if rows.scans != 1 {
+		t.Errorf("Scan 을 %d번 불렀다, want 1", rows.scans)
+	}
+}
+
+// 조회가 중간에 끊기면 pgx 는 Next() 를 false 로 돌리고 Err() 에만 사유를 둔다.
+// Err() 를 보지 않으면 "0명" 이 200 으로 나간다.
+func TestScanEmployeesReportsRowsErr(t *testing.T) {
+	broken := errors.New("unexpected EOF")
+	rows := &fakeRows{values: [][]any{
+		{"e-1", "E001", "김개발", "", nil, "", "", "", "", "active", nil, ""},
+	}, err: broken}
+	if _, err := scanEmployees(rows); !errors.Is(err, broken) {
+		t.Errorf("scanEmployees 오류 = %v, want %v", err, broken)
+	}
+}
+
+func TestScanOrganizationsReportsFailures(t *testing.T) {
+	broken := errors.New("conn closed")
+	if _, err := scanOrganizations(&fakeRows{values: [][]any{{"o-1", "D01", "개발팀", nil, "#111111"}}, scanErr: broken}); !errors.Is(err, broken) {
+		t.Errorf("Scan 실패를 올리지 않는다: %v", err)
+	}
+	if _, err := scanOrganizations(&fakeRows{err: broken}); !errors.Is(err, broken) {
+		t.Errorf("rows.Err() 를 올리지 않는다: %v", err)
+	}
+	items, err := scanOrganizations(&fakeRows{values: [][]any{{"o-1", "D01", "개발팀", ptr("o-0"), "#111111"}}})
+	if err != nil {
+		t.Fatalf("scanOrganizations 오류: %v", err)
+	}
+	if len(items) != 1 || items[0]["name"] != "개발팀" || items[0]["externalId"] != "D01" {
+		t.Errorf("정상 행이 어긋났다: %v", items)
+	}
+	// 조직이 없는 설치에서도 JSON 이 null 이 아니라 [] 여야 한다 — 프런트의
+	// organizations.map 이 null 에서 깨진다.
+	empty, err := scanOrganizations(&fakeRows{})
+	if err != nil || empty == nil {
+		t.Errorf("빈 결과가 nil 이면 JSON 이 null 이 된다: %v, %v", empty, err)
+	}
+}
+
+func TestScanHistoryReportsFailures(t *testing.T) {
+	broken := errors.New("conn closed")
+	row := []any{"h-1", "2026-10-05T00:00:00Z", "E001", "김개발", "A-01", "A-02", "관리자", "자리 이동", "manual"}
+	if _, err := scanHistory(&fakeRows{values: [][]any{row}, scanErr: broken}); !errors.Is(err, broken) {
+		t.Errorf("Scan 실패를 올리지 않는다: %v", err)
+	}
+	if _, err := scanHistory(&fakeRows{err: broken}); !errors.Is(err, broken) {
+		t.Errorf("rows.Err() 를 올리지 않는다: %v", err)
+	}
+	items, err := scanHistory(&fakeRows{values: [][]any{row}})
+	if err != nil {
+		t.Fatalf("scanHistory 오류: %v", err)
+	}
+	// 이력 화면이 읽는 키 이름 계약.
+	if len(items) != 1 || items[0]["employeeNo"] != "E001" || items[0]["previousSeat"] != "A-01" ||
+		items[0]["newSeat"] != "A-02" || items[0]["actor"] != "관리자" || items[0]["source"] != "manual" {
+		t.Errorf("정상 행의 키 짝이 어긋났다: %v", items)
+	}
+	empty, err := scanHistory(&fakeRows{})
+	if err != nil || empty == nil {
+		t.Errorf("빈 결과가 nil 이면 JSON 이 null 이 된다: %v, %v", empty, err)
 	}
 }

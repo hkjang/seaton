@@ -13,6 +13,40 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
+// rowScanner 는 목록 핸들러의 스캔 루프가 pgx.Rows 에서 실제로 쓰는 세 메서드다.
+// 이 작은 인터페이스로 가려 두면 DB 없이도 "행을 읽다 깨지는" 경우를 단위
+// 테스트로 만들 수 있다 — 그러지 않으면 아래의 오류 처리가 영원히 증명되지
+// 않는다.
+type rowScanner interface {
+	Next() bool
+	Scan(dest ...any) error
+	Err() error
+}
+
+// scanX 세 함수의 공통 규약:
+//   - Scan 오류는 삼키지 않고 즉시 돌려준다. 실패한 행만 조용히 버리면 "직원
+//     3명" 이 200 으로 나가고 관리자는 그것이 전부라고 믿는다. Scan 이 깨지면
+//     pgx 가 rows 를 닫으므로 여기서 rows.Err() 는 보지 않는다.
+//   - 루프가 끝난 뒤 rows.Err() 도 돌려준다. 조회가 중간에 끊기면 pgx 는 Next()
+//     를 false 로 돌리고 사유를 Err() 에만 둔다.
+//   - 목록은 []T{} 로 시작한다. nil 을 돌려주면 JSON 이 null 이 되어 프런트의
+//     items.map 이 깨진다.
+func scanOrganizations(rows rowScanner) ([]map[string]any, error) {
+	items := []map[string]any{}
+	for rows.Next() {
+		var id, external, name, color string
+		var parent *string
+		if err := rows.Scan(&id, &external, &name, &parent, &color); err != nil {
+			return nil, err
+		}
+		items = append(items, map[string]any{"id": id, "externalId": external, "name": name, "parentId": parent, "color": color})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 func (s *Server) listOrganizations(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.db.Query(r.Context(), `SELECT id,COALESCE(external_id,''),name,parent_id,color FROM organizations ORDER BY name`)
 	if err != nil {
@@ -20,13 +54,10 @@ func (s *Server) listOrganizations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rows.Close()
-	items := []map[string]any{}
-	for rows.Next() {
-		var id, external, name, color string
-		var parent *string
-		if rows.Scan(&id, &external, &name, &parent, &color) == nil {
-			items = append(items, map[string]any{"id": id, "externalId": external, "name": name, "parentId": parent, "color": color})
-		}
+	items, err := scanOrganizations(rows)
+	if err != nil {
+		notFoundOrServer(w, err)
+		return
 	}
 	writeJSON(w, 200, map[string]any{"items": items})
 }
@@ -77,14 +108,27 @@ func (s *Server) listEmployees(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rows.Close()
+	items, err := scanEmployees(rows)
+	if err != nil {
+		notFoundOrServer(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"items": items})
+}
+
+func scanEmployees(rows rowScanner) ([]Employee, error) {
 	items := []Employee{}
 	for rows.Next() {
 		var item Employee
-		if rows.Scan(&item.ID, &item.EmployeeNo, &item.Name, &item.Email, &item.OrganizationID, &item.OrganizationName, &item.Title, &item.Position, &item.Workplace, &item.Status, &item.SeatID, &item.SeatNo) == nil {
-			items = append(items, item)
+		if err := rows.Scan(&item.ID, &item.EmployeeNo, &item.Name, &item.Email, &item.OrganizationID, &item.OrganizationName, &item.Title, &item.Position, &item.Workplace, &item.Status, &item.SeatID, &item.SeatNo); err != nil {
+			return nil, err
 		}
+		items = append(items, item)
 	}
-	writeJSON(w, 200, map[string]any{"items": items})
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 type employeeInput struct {
@@ -481,17 +525,30 @@ func (s *Server) listHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rows.Close()
-	items := []map[string]any{}
-	for rows.Next() {
-		var id, employeeNo, name, previous, next, actor, reason, source string
-		var changed any
-		if rows.Scan(&id, &changed, &employeeNo, &name, &previous, &next, &actor, &reason, &source) == nil {
-			items = append(items, map[string]any{"id": id, "changedAt": changed, "employeeNo": employeeNo, "employeeName": name, "previousSeat": previous, "newSeat": next, "actor": actor, "reason": reason, "source": source})
-		}
+	items, err := scanHistory(rows)
+	if err != nil {
+		notFoundOrServer(w, err)
+		return
 	}
 	writeJSON(w, 200, map[string]any{
 		"items": items, "total": total, "limit": limit,
 		// 상한에 걸리면 화면이 "5000+"처럼 표기할 수 있게 알린다.
 		"totalCapped": total >= historyCountCap,
 	})
+}
+
+func scanHistory(rows rowScanner) ([]map[string]any, error) {
+	items := []map[string]any{}
+	for rows.Next() {
+		var id, employeeNo, name, previous, next, actor, reason, source string
+		var changed any
+		if err := rows.Scan(&id, &changed, &employeeNo, &name, &previous, &next, &actor, &reason, &source); err != nil {
+			return nil, err
+		}
+		items = append(items, map[string]any{"id": id, "changedAt": changed, "employeeNo": employeeNo, "employeeName": name, "previousSeat": previous, "newSeat": next, "actor": actor, "reason": reason, "source": source})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
