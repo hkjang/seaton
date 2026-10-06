@@ -228,6 +228,22 @@ func (f *fakeRows) Scan(dest ...any) error {
 				return fmt.Errorf("fakeRows: dest[%d] 는 *string 인데 값은 %T 다", i, v)
 			}
 			*target = p
+		case *float64:
+			f, ok := v.(float64)
+			if !ok {
+				return fmt.Errorf("fakeRows: dest[%d] 는 float64 인데 값은 %T 다", i, v)
+			}
+			*target = f
+		case **float64:
+			if v == nil {
+				*target = nil
+				continue
+			}
+			p, ok := v.(*float64)
+			if !ok {
+				return fmt.Errorf("fakeRows: dest[%d] 는 *float64 인데 값은 %T 다", i, v)
+			}
+			*target = p
 		case *any:
 			*target = v
 		default:

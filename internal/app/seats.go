@@ -15,6 +15,26 @@ import (
 	"github.com/xuri/excelize/v2"
 )
 
+// scanSeats 는 employees.go 의 scanX 세 함수와 같은 규약을 따른다(그 파일의
+// rowScanner 와 규약 주석 참조) — Scan 오류는 즉시 돌려주고, 루프가 끝난 뒤
+// rows.Err() 도 돌려주며, 목록은 []Seat{} 로 시작한다. 좌석맵은 이 서비스의
+// 중심 화면이라 조회가 중간에 끊긴 것을 삼키면 "좌석 40개" 대신 "좌석 12개" 가
+// 200 으로 나가고 관리자는 그것이 도면 전부라고 믿는다.
+func scanSeats(rows rowScanner) ([]Seat, error) {
+	items := []Seat{}
+	for rows.Next() {
+		var item Seat
+		if err := rows.Scan(&item.ID, &item.FloorMapID, &item.SeatNo, &item.Type, &item.Status, &item.X, &item.Y, &item.Width, &item.Height, &item.Rotation, &item.Confidence, &item.OrganizationID, &item.OrganizationName, &item.EmployeeID, &item.EmployeeNo, &item.EmployeeName, &item.EmployeeOrganizationID, &item.EmployeeOrganizationName, &item.EmployeeWorkplace); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 func (s *Server) listSeats(w http.ResponseWriter, r *http.Request) {
 	mapID := r.URL.Query().Get("floorMapId")
 	floorID := r.URL.Query().Get("floorId")
@@ -30,12 +50,10 @@ func (s *Server) listSeats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rows.Close()
-	items := []Seat{}
-	for rows.Next() {
-		var item Seat
-		if rows.Scan(&item.ID, &item.FloorMapID, &item.SeatNo, &item.Type, &item.Status, &item.X, &item.Y, &item.Width, &item.Height, &item.Rotation, &item.Confidence, &item.OrganizationID, &item.OrganizationName, &item.EmployeeID, &item.EmployeeNo, &item.EmployeeName, &item.EmployeeOrganizationID, &item.EmployeeOrganizationName, &item.EmployeeWorkplace) == nil {
-			items = append(items, item)
-		}
+	items, err := scanSeats(rows)
+	if err != nil {
+		notFoundOrServer(w, err)
+		return
 	}
 	writeJSON(w, 200, map[string]any{"items": items})
 }
