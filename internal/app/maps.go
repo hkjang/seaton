@@ -21,14 +21,29 @@ func (s *Server) listBuildings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rows.Close()
+	items, err := scanBuildings(rows)
+	if err != nil {
+		notFoundOrServer(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"items": items})
+}
+
+// 규약은 employees.go 의 scanX 주석과 같다 — Scan 오류는 즉시 돌려주고, 루프가
+// 끝난 뒤 rows.Err() 도 돌려주며, 목록은 []map[string]any{} 로 시작한다.
+func scanBuildings(rows rowScanner) ([]map[string]any, error) {
 	items := []map[string]any{}
 	for rows.Next() {
 		var id, name, code, address string
-		if rows.Scan(&id, &name, &code, &address) == nil {
-			items = append(items, map[string]any{"id": id, "name": name, "code": code, "address": address})
+		if err := rows.Scan(&id, &name, &code, &address); err != nil {
+			return nil, err
 		}
+		items = append(items, map[string]any{"id": id, "name": name, "code": code, "address": address})
 	}
-	writeJSON(w, 200, map[string]any{"items": items})
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 func (s *Server) createBuilding(w http.ResponseWriter, r *http.Request) {
@@ -65,15 +80,28 @@ func (s *Server) listFloors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rows.Close()
+	items, err := scanFloors(rows)
+	if err != nil {
+		notFoundOrServer(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"items": items})
+}
+
+func scanFloors(rows rowScanner) ([]map[string]any, error) {
 	items := []map[string]any{}
 	for rows.Next() {
 		var id, bid, name, code, bname string
 		var order int
-		if rows.Scan(&id, &bid, &name, &code, &order, &bname) == nil {
-			items = append(items, map[string]any{"id": id, "buildingId": bid, "buildingName": bname, "name": name, "code": code, "sortOrder": order})
+		if err := rows.Scan(&id, &bid, &name, &code, &order, &bname); err != nil {
+			return nil, err
 		}
+		items = append(items, map[string]any{"id": id, "buildingId": bid, "buildingName": bname, "name": name, "code": code, "sortOrder": order})
 	}
-	writeJSON(w, 200, map[string]any{"items": items})
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 func (s *Server) createFloor(w http.ResponseWriter, r *http.Request) {
@@ -115,6 +143,15 @@ func (s *Server) listFloorMaps(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rows.Close()
+	items, err := scanFloorMaps(rows)
+	if err != nil {
+		notFoundOrServer(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"items": items})
+}
+
+func scanFloorMaps(rows rowScanner) ([]map[string]any, error) {
 	items := []map[string]any{}
 	for rows.Next() {
 		var id, fid, version, name, ct, status, fname, bname string
@@ -123,11 +160,15 @@ func (s *Server) listFloorMaps(w http.ResponseWriter, r *http.Request) {
 		var seatCount, reviewCount int
 		var created any
 		var gridRaw []byte
-		if rows.Scan(&id, &fid, &version, &name, &ct, &width, &height, &status, &active, &created, &fname, &bname, &seatCount, &reviewCount, &gridRaw) == nil {
-			items = append(items, map[string]any{"id": id, "floorId": fid, "version": version, "fileName": name, "contentType": ct, "width": width, "height": height, "status": status, "active": active, "createdAt": created, "floorName": fname, "buildingName": bname, "seatCount": seatCount, "reviewCount": reviewCount, "contentUrl": "/api/v1/floor-maps/" + id + "/content", "previewUrl": "/api/v1/floor-maps/" + id + "/preview", "overlayReady": width != nil && height != nil, "grid": parseSeatGrid(gridRaw)})
+		if err := rows.Scan(&id, &fid, &version, &name, &ct, &width, &height, &status, &active, &created, &fname, &bname, &seatCount, &reviewCount, &gridRaw); err != nil {
+			return nil, err
 		}
+		items = append(items, map[string]any{"id": id, "floorId": fid, "version": version, "fileName": name, "contentType": ct, "width": width, "height": height, "status": status, "active": active, "createdAt": created, "floorName": fname, "buildingName": bname, "seatCount": seatCount, "reviewCount": reviewCount, "contentUrl": "/api/v1/floor-maps/" + id + "/content", "previewUrl": "/api/v1/floor-maps/" + id + "/preview", "overlayReady": width != nil && height != nil, "grid": parseSeatGrid(gridRaw)})
 	}
-	writeJSON(w, 200, map[string]any{"items": items})
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 func (s *Server) uploadFloorMap(w http.ResponseWriter, r *http.Request) {

@@ -244,6 +244,38 @@ func (f *fakeRows) Scan(dest ...any) error {
 				return fmt.Errorf("fakeRows: dest[%d] 는 *float64 인데 값은 %T 다", i, v)
 			}
 			*target = p
+		case *int:
+			n, ok := v.(int)
+			if !ok {
+				return fmt.Errorf("fakeRows: dest[%d] 는 int 인데 값은 %T 다", i, v)
+			}
+			*target = n
+		case **int:
+			if v == nil {
+				*target = nil
+				continue
+			}
+			p, ok := v.(*int)
+			if !ok {
+				return fmt.Errorf("fakeRows: dest[%d] 는 *int 인데 값은 %T 다", i, v)
+			}
+			*target = p
+		case *bool:
+			b, ok := v.(bool)
+			if !ok {
+				return fmt.Errorf("fakeRows: dest[%d] 는 bool 인데 값은 %T 다", i, v)
+			}
+			*target = b
+		case *[]byte:
+			if v == nil {
+				*target = nil
+				continue
+			}
+			b, ok := v.([]byte)
+			if !ok {
+				return fmt.Errorf("fakeRows: dest[%d] 는 []byte 인데 값은 %T 다", i, v)
+			}
+			*target = b
 		case *any:
 			*target = v
 		default:
