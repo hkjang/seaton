@@ -92,6 +92,58 @@ func (s *Server) mcpToolCall(w http.ResponseWriter, r *http.Request, req mcpRequ
 	writeJSON(w, 200, mcpResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"content": []map[string]string{{"type": "text", "text": string(raw)}}, "structuredContent": result, "isError": false}})
 }
 
+// 아래 세 함수는 employees.go 의 rowScanner 규약(26-33행)을 따른다. MCP 도구는
+// 사람이 아니라 모델이 읽으므로 한 가지가 더 중요하다 — 읽기에 실패한 행을
+// 건너뛰는 것으로도 모자라 예전에는 빈 구조체를 목록에 끼워 넣었다. 사번도
+// 이름도 비어 있는 직원, 좌석번호가 빈 "배정 가능한 좌석" 을 모델이 그대로
+// 사람에게 읊거나 assign_seat 의 인수로 되돌려 보낸다. 실패는 숨기지 않고
+// 돌려주고, mcpToolCall 이 isError 로 바꿔 내보낸다.
+func scanMCPEmployees(rows rowScanner) ([]map[string]any, error) {
+	items := []map[string]any{}
+	for rows.Next() {
+		var id, no, nm, org, seat, building, floor string
+		if err := rows.Scan(&id, &no, &nm, &org, &seat, &building, &floor); err != nil {
+			return nil, err
+		}
+		items = append(items, map[string]any{"id": id, "employeeNo": no, "name": nm, "organization": org, "seatNo": seat, "building": building, "floor": floor})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func scanMCPSeats(rows rowScanner) ([]map[string]any, error) {
+	items := []map[string]any{}
+	for rows.Next() {
+		var id, no, b, f string
+		if err := rows.Scan(&id, &no, &b, &f); err != nil {
+			return nil, err
+		}
+		items = append(items, map[string]any{"id": id, "seatNo": no, "building": b, "floor": f})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func scanMCPFloorMapSeats(rows rowScanner) ([]map[string]any, error) {
+	items := []map[string]any{}
+	for rows.Next() {
+		var id, no, typ, status, employee string
+		var x, y, ww, hh float64
+		if err := rows.Scan(&id, &no, &typ, &status, &x, &y, &ww, &hh, &employee); err != nil {
+			return nil, err
+		}
+		items = append(items, map[string]any{"id": id, "seatNo": no, "type": typ, "status": status, "x": x, "y": y, "width": ww, "height": hh, "employee": employee})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 func (s *Server) executeMCPTool(r *http.Request, name string, args map[string]any) (any, error) {
 	limit := intArg(args, "limit", 20, 1, 100)
 	switch name {
@@ -107,11 +159,9 @@ func (s *Server) executeMCPTool(r *http.Request, name string, args map[string]an
 			return nil, err
 		}
 		defer rows.Close()
-		items := []map[string]any{}
-		for rows.Next() {
-			var id, no, nm, org, seat, building, floor string
-			_ = rows.Scan(&id, &no, &nm, &org, &seat, &building, &floor)
-			items = append(items, map[string]any{"id": id, "employeeNo": no, "name": nm, "organization": org, "seatNo": seat, "building": building, "floor": floor})
+		items, err := scanMCPEmployees(rows)
+		if err != nil {
+			return nil, err
 		}
 		return map[string]any{"items": items}, nil
 	case "list_available_seats":
@@ -121,11 +171,9 @@ func (s *Server) executeMCPTool(r *http.Request, name string, args map[string]an
 			return nil, err
 		}
 		defer rows.Close()
-		items := []map[string]any{}
-		for rows.Next() {
-			var id, no, b, f string
-			_ = rows.Scan(&id, &no, &b, &f)
-			items = append(items, map[string]any{"id": id, "seatNo": no, "building": b, "floor": f})
+		items, err := scanMCPSeats(rows)
+		if err != nil {
+			return nil, err
 		}
 		return map[string]any{"items": items}, nil
 	case "get_floor_map":
@@ -146,12 +194,9 @@ func (s *Server) executeMCPTool(r *http.Request, name string, args map[string]an
 			return nil, err
 		}
 		defer rows.Close()
-		items := []map[string]any{}
-		for rows.Next() {
-			var id, no, typ, status, employee string
-			var x, y, ww, hh float64
-			_ = rows.Scan(&id, &no, &typ, &status, &x, &y, &ww, &hh, &employee)
-			items = append(items, map[string]any{"id": id, "seatNo": no, "type": typ, "status": status, "x": x, "y": y, "width": ww, "height": hh, "employee": employee})
+		items, err := scanMCPFloorMapSeats(rows)
+		if err != nil {
+			return nil, err
 		}
 		return map[string]any{"id": mapID, "version": version, "building": building, "floor": floor, "contentUrl": "/api/v1/floor-maps/" + mapID + "/content", "previewUrl": "/api/v1/floor-maps/" + mapID + "/preview", "seats": items}, nil
 	case "get_action_items":
